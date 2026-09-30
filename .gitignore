@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+
+# 虚拟环境
+venv/
+.venv/
+env/
+ENV/
+
+# 临时文件 / 下载缓存
+temp/
+tmp/
+*.tmp
+_temp_*
+_temp*
+# 下划线开头的调试/测试脚本
+_*.py
+_*.txt
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 日志
+*.log
+
+# 媒体文件（视频/字幕产物不入库）
+*.mp4
+*.mkv
+*.srt
+*.flv
+*.webm
+*.part
+
+# CodeBuddy 本地数据
+.codebuddy/
+
+# YouTube 下载工作目录
+freelancers/

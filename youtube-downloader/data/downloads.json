@@ -1,0 +1,19 @@
+{
+  "version": "2.0",
+  "meta": {
+    "last_updated": "2026-06-28T16:30:52.305363"
+  },
+  "config": {
+    "output_dir": "F:\\lixiaofei\\freelancers\\youtube-work",
+    "check_dir": "F:\\lixiaofei\\freelancers\\youtube-work"
+  },
+  "series_index": {
+    "PL2syiPwjmIEVIQRsW6KyPnAyc2ryq72CT": {
+      "name": "🐭 Maisy Mouse 🐭 English Full Episode 🐭 Cartoon For Kids 🐭",
+      "abbrev": "Maisy_Mouse",
+      "url": "https://www.youtube.com/playlist?list=PL2syiPwjmIEVIQRsW6KyPnAyc2ryq72CT",
+      "total_videos": 200,
+      "file": "series/Maisy_Mouse.json"
+    }
+  }
+}

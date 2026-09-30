@@ -1,0 +1,1346 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>分众传媒（002027）综合分析报告</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif; background: #f5f6fa; color: #1a1a2e; font-size: 14px; line-height: 1.6; }
+  .header { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%); color: #fff; padding: 32px 40px 28px; }
+  .header-top { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 16px; }
+  .company-info h1 { font-size: 26px; font-weight: 600; letter-spacing: 1px; }
+  .company-info .subtitle { font-size: 13px; color: rgba(255,255,255,0.65); margin-top: 4px; }
+  .header-meta { display: flex; gap: 24px; flex-wrap: wrap; margin-top: 20px; }
+  .meta-item { text-align: center; }
+  .meta-item .val { font-size: 22px; font-weight: 600; color: #e94560; }
+  .meta-item .val.green { color: #0be881; }
+  .meta-item .val.yellow { color: #ffd700; }
+  .meta-item .lbl { font-size: 11px; color: rgba(255,255,255,0.5); margin-top: 2px; }
+  .nav { background: #fff; border-bottom: 1px solid #e8e8f0; display: flex; overflow-x: auto; padding: 0 20px; }
+  .nav-btn { padding: 14px 18px; font-size: 13px; color: #666; cursor: pointer; border: none; background: none; border-bottom: 2px solid transparent; white-space: nowrap; transition: all 0.2s; }
+  .nav-btn.active { color: #e94560; border-bottom-color: #e94560; font-weight: 500; }
+  .nav-btn:hover { color: #e94560; }
+  .content { max-width: 1100px; margin: 0 auto; padding: 24px 20px; }
+  .section { display: none; }
+  .section.active { display: block; }
+  .section-title { font-size: 17px; font-weight: 600; color: #1a1a2e; margin-bottom: 18px; padding-left: 10px; border-left: 3px solid #e94560; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 18px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin-bottom: 18px; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 18px; }
+  @media (max-width: 700px) { .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr 1fr; } }
+  .card { background: #fff; border-radius: 10px; padding: 18px 20px; border: 1px solid #e8e8f0; }
+  .metric-card { background: #fff; border-radius: 8px; padding: 14px 16px; border: 1px solid #e8e8f0; text-align: center; }
+  .metric-card .m-val { font-size: 22px; font-weight: 600; color: #e94560; margin: 4px 0 2px; }
+  .metric-card .m-val.up { color: #e94560; }
+  .metric-card .m-val.down { color: #00c853; }
+  .metric-card .m-val.neutral { color: #2196f3; }
+  .metric-card .m-lbl { font-size: 12px; color: #888; }
+  .metric-card .m-change { font-size: 11px; margin-top: 4px; }
+  .metric-card .m-change.pos { color: #e94560; }
+  .metric-card .m-change.neg { color: #00c853; }
+  .metric-card .m-change.neutral { color: #888; }
+  .chart-wrap { position: relative; height: 260px; width: 100%; }
+  .chart-wrap.tall { height: 320px; }
+  .chart-title { font-size: 13px; font-weight: 500; color: #444; margin-bottom: 10px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 8px; font-size: 12px; color: #666; }
+  .legend span { display: flex; align-items: center; gap: 5px; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; margin: 2px; }
+  .tag-red { background: #fde8ea; color: #e94560; }
+  .tag-green { background: #e8f5e9; color: #2e7d32; }
+  .tag-blue { background: #e3f2fd; color: #1565c0; }
+  .tag-orange { background: #fff3e0; color: #e65100; }
+  .tag-gray { background: #f5f5f5; color: #555; }
+  .risk-item { display: flex; align-items: flex-start; gap: 12px; padding: 12px 0; border-bottom: 1px solid #f0f0f0; }
+  .risk-item:last-child { border-bottom: none; }
+  .risk-level { width: 48px; height: 22px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 500; flex-shrink: 0; margin-top: 2px; }
+  .risk-high { background: #fde8ea; color: #e94560; }
+  .risk-mid { background: #fff3e0; color: #e65100; }
+  .risk-low { background: #e8f5e9; color: #2e7d32; }
+  .risk-info h4 { font-size: 13px; font-weight: 500; color: #222; margin-bottom: 3px; }
+  .risk-info p { font-size: 12px; color: #666; line-height: 1.5; }
+  .moat-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px dashed #eee; }
+  .moat-row:last-child { border-bottom: none; }
+  .moat-label { font-size: 12px; color: #444; width: 100px; flex-shrink: 0; }
+  .moat-bar-bg { flex: 1; height: 8px; background: #f0f0f0; border-radius: 4px; overflow: hidden; }
+  .moat-bar { height: 100%; border-radius: 4px; background: #e94560; }
+  .moat-score { font-size: 12px; font-weight: 500; color: #e94560; width: 40px; text-align: right; }
+  .conclusion-box { background: #fff; border-radius: 10px; padding: 20px; border: 1px solid #e8e8f0; margin-bottom: 16px; }
+  .conclusion-box h3 { font-size: 14px; font-weight: 500; margin-bottom: 10px; color: #1a1a2e; }
+  .conclusion-box.bull { border-left: 4px solid #e94560; }
+  .conclusion-box.bear { border-left: 4px solid #00c853; }
+  .conclusion-box.neutral { border-left: 4px solid #2196f3; }
+  .conclusion-box ul { padding-left: 16px; }
+  .conclusion-box li { font-size: 13px; color: #555; margin-bottom: 6px; line-height: 1.6; }
+  .rating-badge { display: inline-flex; align-items: center; justify-content: center; width: 80px; height: 80px; border-radius: 50%; font-size: 18px; font-weight: 600; }
+  .rating-buy { background: #fde8ea; color: #e94560; }
+  .rating-hold { background: #fff3e0; color: #e65100; }
+  .comp-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .comp-table th { background: #f8f8fc; padding: 10px 12px; text-align: left; color: #555; font-weight: 500; border-bottom: 1px solid #e8e8f0; }
+  .comp-table td { padding: 10px 12px; border-bottom: 1px solid #f5f5f5; color: #333; }
+  .comp-table tr:last-child td { border-bottom: none; }
+  .comp-table tr.highlight td { background: #fef9fb; font-weight: 500; }
+  .val-section { background: #fff; border-radius: 10px; padding: 16px 20px; border: 1px solid #e8e8f0; margin-bottom: 16px; }
+  .val-section h3 { font-size: 14px; font-weight: 500; margin-bottom: 12px; color: #1a1a2e; }
+  .progress-row { margin-bottom: 12px; }
+  .progress-row .pr-head { display: flex; justify-content: space-between; font-size: 12px; color: #666; margin-bottom: 4px; }
+  .progress-bar { height: 10px; background: #f0f0f0; border-radius: 5px; overflow: hidden; }
+  .progress-fill { height: 100%; border-radius: 5px; }
+  .news-item { padding: 12px 0; border-bottom: 1px solid #f5f5f5; }
+  .news-item:last-child { border-bottom: none; }
+  .news-item .news-date { font-size: 11px; color: #aaa; margin-bottom: 4px; }
+  .news-item .news-title { font-size: 13px; color: #333; line-height: 1.5; }
+  .news-item .news-tag { margin-top: 5px; }
+  .tech-support { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 12px; }
+  .tech-level { border-radius: 8px; padding: 12px; text-align: center; }
+  .tech-level .tl-price { font-size: 18px; font-weight: 600; margin-bottom: 4px; }
+  .tech-level .tl-desc { font-size: 11px; color: #888; }
+  .support-box { background: #e8f5e9; }
+  .support-box .tl-price { color: #2e7d32; }
+  .resist-box { background: #fde8ea; }
+  .resist-box .tl-price { color: #c62828; }
+  .current-box { background: #e3f2fd; }
+  .current-box .tl-price { color: #1565c0; }
+  .indicator-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #f5f5f5; font-size: 13px; }
+  .indicator-row:last-child { border-bottom: none; }
+  .ind-signal { padding: 2px 10px; border-radius: 10px; font-size: 11px; }
+  .signal-buy { background: #fde8ea; color: #e94560; }
+  .signal-sell { background: #e8f5e9; color: #2e7d32; }
+  .signal-neutral { background: #f5f5f5; color: #888; }
+  .health-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .health-card { background: #fff; border-radius: 8px; padding: 14px; border: 1px solid #e8e8f0; }
+  .health-card .hc-title { font-size: 12px; color: #888; margin-bottom: 8px; }
+  .health-card .hc-val { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
+  .health-card .hc-desc { font-size: 11px; color: #aaa; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-top">
+    <div class="company-info">
+      <h1>分众传媒（002027.SZ）</h1>
+      <div class="subtitle">中国最大生活圈媒体平台 · 梯媒行业绝对龙头 · 深交所上市</div>
+      <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">
+        <span class="tag tag-red">梯媒龙头</span>
+        <span class="tag tag-blue">消费电子广告</span>
+        <span class="tag tag-orange">收购新潮传媒</span>
+        <span class="tag tag-gray">2026-06-19 分析</span>
+      </div>
+    </div>
+    <div style="text-align:right;">
+      <div style="font-size:34px;font-weight:700;color:#e94560;">¥5.02</div>
+      <div style="font-size:12px;color:rgba(255,255,255,0.5);margin-top:2px;">2026-06-18 收盘价</div>
+      <div style="font-size:13px;color:#e94560;margin-top:4px;">▼ -1.95% 较昨日</div>
+    </div>
+  </div>
+  <div class="header-meta">
+    <div class="meta-item">
+      <div class="val">720亿</div>
+      <div class="lbl">总市值（估）</div>
+    </div>
+    <div class="meta-item">
+      <div class="val">127.6亿</div>
+      <div class="lbl">2025年营收</div>
+    </div>
+    <div class="meta-item">
+      <div class="val" style="color:#0be881;">29.5亿</div>
+      <div class="lbl">2025年净利润</div>
+    </div>
+    <div class="meta-item">
+      <div class="val yellow">70.5%</div>
+      <div class="lbl">2025年毛利率</div>
+    </div>
+    <div class="meta-item">
+      <div class="val yellow">80%+</div>
+      <div class="lbl">梯媒市占率（并购后）</div>
+    </div>
+  </div>
+</div>
+
+<div class="nav">
+  <button class="nav-btn active" onclick="showSection('overview', this)">① 公司概况</button>
+  <button class="nav-btn" onclick="showSection('financial', this)">② 财务数据</button>
+  <button class="nav-btn" onclick="showSection('technical', this)">③ 技术分析</button>
+  <button class="nav-btn" onclick="showSection('sentiment', this)">④ 市场情绪</button>
+  <button class="nav-btn" onclick="showSection('competition', this)">⑤ 竞品对比</button>
+  <button class="nav-btn" onclick="showSection('valuation', this)">⑥ 估值健康</button>
+  <button class="nav-btn" onclick="showSection('macro', this)">⑦ 宏观环境</button>
+  <button class="nav-btn" onclick="showSection('risk', this)">⑧ 主要风险</button>
+  <button class="nav-btn" onclick="showSection('conclusion', this)">⑨ 结论建议</button>
+</div>
+
+<div class="content">
+
+<!-- ① 公司概况 -->
+<div class="section active" id="overview">
+  <div class="section-title">公司概况</div>
+  <div class="grid-2">
+    <div class="card">
+      <div class="chart-title">业务模式与核心竞争力</div>
+      <p style="font-size:13px;color:#444;line-height:1.8;margin-bottom:12px;">
+        分众传媒是中国最大的生活圈媒体平台，主营业务为<strong>电梯电视、电梯海报等楼宇广告</strong>资源的出售与运营。
+        公司在全国核心城市写字楼、高档住宅区控制约<strong>500万个+</strong>广告终端点位，日均触达人次超<strong>3亿</strong>。
+      </p>
+      <p style="font-size:13px;color:#444;line-height:1.8;">
+        2025年4月，分众宣布以约<strong>83亿元</strong>收购竞争对手新潮传媒100%股权，并购完成后梯媒市占率将超过<strong>80%</strong>，
+        写字楼场景占有率高达<strong>88%</strong>，构筑起更难逾越的竞争壁垒。
+      </p>
+    </div>
+    <div class="card">
+      <div class="chart-title">护城河评估</div>
+      <div class="moat-row"><div class="moat-label">物理点位垄断</div><div class="moat-bar-bg"><div class="moat-bar" style="width:96%"></div></div><div class="moat-score">96分</div></div>
+      <div class="moat-row"><div class="moat-label">规模网络效应</div><div class="moat-bar-bg"><div class="moat-bar" style="width:90%"></div></div><div class="moat-score">90分</div></div>
+      <div class="moat-row"><div class="moat-label">品牌/客户粘性</div><div class="moat-bar-bg"><div class="moat-bar" style="width:82%"></div></div><div class="moat-score">82分</div></div>
+      <div class="moat-row"><div class="moat-label">成本控制能力</div><div class="moat-bar-bg"><div class="moat-bar" style="width:78%"></div></div><div class="moat-score">78分</div></div>
+      <div class="moat-row"><div class="moat-label">数智化转型</div><div class="moat-bar-bg"><div class="moat-bar" style="width:65%"></div></div><div class="moat-score">65分</div></div>
+      <div class="moat-row"><div class="moat-label">海外布局</div><div class="moat-bar-bg"><div class="moat-bar" style="width:40%"></div></div><div class="moat-score">40分</div></div>
+    </div>
+  </div>
+
+  <div class="grid-3">
+    <div class="card">
+      <div class="chart-title">行业地位</div>
+      <div class="chart-wrap" style="height:200px;">
+        <canvas id="marketShareChart" role="img" aria-label="梯媒市场份额分布">加载中...</canvas>
+      </div>
+    </div>
+    <div class="card" style="grid-column: span 2;">
+      <div class="chart-title">营收结构（2025年按客户行业）</div>
+      <div class="chart-wrap" style="height:200px;">
+        <canvas id="revenueStructChart" role="img" aria-label="2025年营收行业结构">加载中...</canvas>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <div class="chart-title">波特五力 &amp; 产业链分析</div>
+      <div style="margin-top:8px;">
+        <div class="indicator-row"><span>供应商议价权</span><span class="ind-signal signal-buy">低</span></div>
+        <div class="indicator-row"><span>客户议价权</span><span class="ind-signal signal-neutral">中</span></div>
+        <div class="indicator-row"><span>新进入者威胁</span><span class="ind-signal signal-buy">低</span></div>
+        <div class="indicator-row"><span>替代品威胁</span><span class="ind-signal signal-sell">中高</span></div>
+        <div class="indicator-row"><span>行业竞争强度</span><span class="ind-signal signal-buy">低（并购后）</span></div>
+      </div>
+      <div style="background:#f8f8fc;border-radius:6px;padding:10px;margin-top:10px;font-size:12px;color:#555;line-height:1.6;">
+        <strong>产业链位置：</strong>上游为电梯物业租赁（成本可控）、下游为广告主（集中度提升中）。并购新潮后，上游物业议价权进一步增强，下游对中小广告主定价权显著提升。
+      </div>
+    </div>
+    <div class="card">
+      <div class="chart-title">管理层与公司治理评估</div>
+      <div style="margin-top:8px;">
+        <div class="indicator-row"><span>管理层履历与信誉</span><span class="ind-signal signal-buy">优秀</span></div>
+        <div class="indicator-row"><span>薪酬与股东利益对齐</span><span class="ind-signal signal-neutral">中等</span></div>
+        <div class="indicator-row"><span>内部人交易信号</span><span class="ind-signal signal-neutral">关注</span></div>
+        <div class="indicator-row"><span>资本配置历史</span><span class="ind-signal signal-sell">存疑</span></div>
+        <div class="indicator-row"><span>治理与关联交易</span><span class="ind-signal signal-buy">规范</span></div>
+      </div>
+      <div style="background:#fff8f0;border-radius:6px;padding:10px;margin-top:10px;font-size:12px;color:#555;line-height:1.6;">
+        <strong>关注点：</strong>数禾科技减值暴露跨界投资决策失误，资本配置能力需持续观察。管理层在主业经营上表现卓越，但非核心投资需加强风控。
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:16px;">
+    <div class="chart-title">核心商业价值总结</div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:10px;">
+      <div style="background:#fef9fb;border-radius:8px;padding:12px 14px;border-left:3px solid #e94560;">
+        <div style="font-size:12px;color:#e94560;font-weight:500;margin-bottom:5px;">独特场景价值</div>
+        <div style="font-size:12px;color:#555;line-height:1.6;">封闭电梯空间内的强制性曝光，用户无法滑走、换台，品牌触达效率极高，是线下媒体中最具确定性的广告形式。</div>
+      </div>
+      <div style="background:#f0f8ff;border-radius:8px;padding:12px 14px;border-left:3px solid #2196f3;">
+        <div style="font-size:12px;color:#2196f3;font-weight:500;margin-bottom:5px;">高现金流属性</div>
+        <div style="font-size:12px;color:#555;line-height:1.6;">2025年经营现金流72亿元，超净利润两倍，轻资产商业模式决定了公司无需大额资本投入即可维持高收益。</div>
+      </div>
+      <div style="background:#f0fff4;border-radius:8px;padding:12px 14px;border-left:3px solid #00c853;">
+        <div style="font-size:12px;color:#2e7d32;font-weight:500;margin-bottom:5px;">分红回报能力</div>
+        <div style="font-size:12px;color:#555;line-height:1.6;">持续高分红，2025年每10股派1.9元，股息率约3.8%，提供稳定的被动收益，对价值投资者吸引力强。</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ② 财务数据 -->
+<div class="section" id="financial">
+  <div class="section-title">财务数据分析</div>
+  <div class="grid-4">
+    <div class="metric-card">
+      <div class="m-lbl">2025年营收</div>
+      <div class="m-val neutral">127.6亿</div>
+      <div class="m-change pos">↑ +4.05% YoY</div>
+    </div>
+    <div class="metric-card">
+      <div class="m-lbl">2025年净利润</div>
+      <div class="m-val up">29.5亿</div>
+      <div class="m-change neg">↓ -42.85% YoY</div>
+    </div>
+    <div class="metric-card">
+      <div class="m-lbl">经营现金流</div>
+      <div class="m-val down">72.1亿</div>
+      <div class="m-change pos">↑ +8.54% YoY</div>
+    </div>
+    <div class="metric-card">
+      <div class="m-lbl">毛利率</div>
+      <div class="m-val down">70.5%</div>
+      <div class="m-change pos">↑ +4.22pct</div>
+    </div>
+  </div>
+  <div class="grid-4">
+    <div class="metric-card">
+      <div class="m-lbl">净利率</div>
+      <div class="m-val neutral">23.1%</div>
+      <div class="m-change neg">↓ 受减值拖累</div>
+    </div>
+    <div class="metric-card">
+      <div class="m-lbl">ROE</div>
+      <div class="m-val neutral">18.28%</div>
+      <div class="m-change neg">↓ -11.63pct</div>
+    </div>
+    <div class="metric-card">
+      <div class="m-lbl">EPS（基本）</div>
+      <div class="m-val neutral">0.20元</div>
+      <div class="m-change neg">↓ 低于往年</div>
+    </div>
+    <div class="metric-card">
+      <div class="m-lbl">2026Q1净利润</div>
+      <div class="m-val down">17.9亿</div>
+      <div class="m-change pos">↑ +57.65% YoY</div>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <div class="chart-title">营收与归母净利润趋势（2019-2025）</div>
+      <div class="legend">
+        <span><span class="legend-dot" style="background:#2196f3;"></span>营业收入（亿元）</span>
+        <span><span class="legend-dot" style="background:#e94560;"></span>归母净利润（亿元）</span>
+      </div>
+      <div class="chart-wrap">
+        <canvas id="revenueChart" role="img" aria-label="分众传媒营收和净利润趋势">加载中...</canvas>
+      </div>
+    </div>
+    <div class="card">
+      <div class="chart-title">毛利率与净利率变化趋势</div>
+      <div class="legend">
+        <span><span class="legend-dot" style="background:#00c853;"></span>毛利率</span>
+        <span><span class="legend-dot" style="background:#ffd700;"></span>净利率</span>
+      </div>
+      <div class="chart-wrap">
+        <canvas id="marginChart" role="img" aria-label="分众传媒利润率趋势">加载中...</canvas>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:16px;">
+    <div class="chart-title">现金流与资本结构</div>
+    <div class="chart-wrap">
+      <canvas id="cashflowChart" role="img" aria-label="分众传媒现金流分析">加载中...</canvas>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <div class="chart-title">杜邦分析：ROE 驱动因子拆解</div>
+      <div class="legend">
+        <span><span class="legend-dot" style="background:#e94560;"></span>ROE</span>
+        <span><span class="legend-dot" style="background:#2196f3;"></span>净利率</span>
+        <span><span class="legend-dot" style="background:#00c853;"></span>资产周转率</span>
+        <span><span class="legend-dot" style="background:#ffd700;"></span>权益乘数</span>
+      </div>
+      <div class="chart-wrap">
+        <canvas id="dupontChart" role="img" aria-label="杜邦分析ROE拆解">加载中...</canvas>
+      </div>
+    </div>
+    <div class="card">
+      <div class="chart-title">资产质量指标</div>
+      <div class="indicator-row"><span>商誉/净资产</span><span style="color:#555;font-size:12px;">约5%</span><span class="ind-signal signal-buy">低风险</span></div>
+      <div class="indicator-row"><span>应收账款周转率</span><span style="color:#555;font-size:12px;">约6.5次</span><span class="ind-signal signal-buy">健康</span></div>
+      <div class="indicator-row"><span>存货周转率</span><span style="color:#555;font-size:12px;">N/A</span><span class="ind-signal signal-neutral">轻资产</span></div>
+      <div class="indicator-row"><span>其他应收款占比</span><span style="color:#555;font-size:12px;">约3%</span><span class="ind-signal signal-buy">正常</span></div>
+      <div class="indicator-row"><span>经营现金流/净利润</span><span style="color:#555;font-size:12px;">2.44x</span><span class="ind-signal signal-buy">优秀</span></div>
+      <div style="background:#e8f5e9;border-radius:6px;padding:10px;margin-top:10px;font-size:12px;color:#2e7d32;line-height:1.6;">
+        资产质量整体优秀：轻资产模式无存货风险，商誉占比低，现金流/净利润远超1，盈利质量高。
+      </div>
+    </div>
+  </div>
+
+  <div class="grid-3" style="margin-bottom:16px;">
+    <div class="metric-card">
+      <div class="m-lbl">3年营收CAGR</div>
+      <div class="m-val neutral">+1.4%</div>
+      <div class="m-change neg">增速放缓</div>
+    </div>
+    <div class="metric-card">
+      <div class="m-lbl">3年净利润CAGR</div>
+      <div class="m-val neutral">-15.5%</div>
+      <div class="m-change neg">受减值拖累</div>
+    </div>
+    <div class="metric-card">
+      <div class="m-lbl">增长驱动</div>
+      <div class="m-val up" style="font-size:16px;">有机+并购</div>
+      <div class="m-change neutral">新潮并表预期增厚</div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:16px;">
+    <div class="chart-title" style="margin-bottom:14px;">2025年净利润下滑核心原因解析</div>
+    <div style="background:#fff8f0;border-radius:8px;padding:14px;border-left:4px solid #ff9800;margin-bottom:12px;">
+      <strong style="color:#e65100;font-size:13px;">核心因素：联营企业投资减值拖累</strong>
+      <p style="font-size:12px;color:#555;margin-top:6px;line-height:1.6;">
+        2025年对联营企业数禾科技计提长期股权投资减值准备约 <strong>21.52亿元</strong>，加上权益法确认的亏损分摊，
+        合计吞噬净利润约 <strong>25.29亿元</strong>。2026年1月已处置数禾科技，影响不可持续。
+      </p>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;">
+      <div style="text-align:center;padding:10px;background:#f8f8fc;border-radius:8px;">
+        <div style="font-size:20px;font-weight:600;color:#e94560;">51.6亿</div>
+        <div style="font-size:11px;color:#888;margin-top:3px;">2024年归母净利润（基准）</div>
+      </div>
+      <div style="text-align:center;padding:10px;background:#fde8ea;border-radius:8px;">
+        <div style="font-size:20px;font-weight:600;color:#c62828;">-25.3亿</div>
+        <div style="font-size:11px;color:#888;margin-top:3px;">减值+亏损分摊拖累</div>
+      </div>
+      <div style="text-align:center;padding:10px;background:#e8f5e9;border-radius:8px;">
+        <div style="font-size:20px;font-weight:600;color:#2e7d32;">27.2亿</div>
+        <div style="font-size:11px;color:#888;margin-top:3px;">扣非净利润（实际主业）</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ③ 技术分析 -->
+<div class="section" id="technical">
+  <div class="section-title">技术分析</div>
+  <div class="grid-4">
+    <div class="metric-card">
+      <div class="m-lbl">当前价格</div>
+      <div class="m-val neutral">5.02元</div>
+      <div class="m-change neg">近期弱势震荡</div>
+    </div>
+    <div class="metric-card">
+      <div class="m-lbl">52周高点</div>
+      <div class="m-val up">8.61元</div>
+      <div class="m-change neg">距高点 -41.7%</div>
+    </div>
+    <div class="metric-card">
+      <div class="m-lbl">52周低点</div>
+      <div class="m-val down">4.70元</div>
+      <div class="m-change pos">当前略高于低点</div>
+    </div>
+    <div class="metric-card">
+      <div class="m-lbl">主力资金</div>
+      <div class="m-val up">净流出</div>
+      <div class="m-change neg">市场情绪偏谨慎</div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:16px;">
+    <div class="chart-title">价格走势模拟图（2025年全年）</div>
+    <div class="chart-wrap tall">
+      <canvas id="priceChart" role="img" aria-label="分众传媒价格走势">加载中...</canvas>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <div class="chart-title">关键支撑与阻力位</div>
+      <div class="tech-support">
+        <div class="tech-level resist-box">
+          <div class="tl-price">7.17元</div>
+          <div class="tl-desc">强阻力位</div>
+        </div>
+        <div class="tech-level resist-box" style="background:#fce4ec;">
+          <div class="tl-price" style="color:#b71c1c;">6.70元</div>
+          <div class="tl-desc">次阻力位</div>
+        </div>
+        <div class="tech-level current-box">
+          <div class="tl-price">5.02元</div>
+          <div class="tl-desc">当前价格</div>
+        </div>
+        <div class="tech-level support-box">
+          <div class="tl-price">4.85元</div>
+          <div class="tl-desc">一档支撑</div>
+        </div>
+        <div class="tech-level support-box" style="background:#c8e6c9;">
+          <div class="tl-price" style="color:#1b5e20;">4.70元</div>
+          <div class="tl-desc">强支撑位</div>
+        </div>
+        <div class="tech-level support-box" style="background:#a5d6a7;">
+          <div class="tl-price" style="color:#1b5e20;">4.35元</div>
+          <div class="tl-desc">底部支撑</div>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="chart-title">技术指标综合</div>
+      <div class="indicator-row">
+        <span>MA5（5日均线）</span>
+        <span style="color:#555;font-size:12px;">约5.08元</span>
+        <span class="ind-signal signal-sell">偏空</span>
+      </div>
+      <div class="indicator-row">
+        <span>MA20（20日均线）</span>
+        <span style="color:#555;font-size:12px;">约5.25元</span>
+        <span class="ind-signal signal-sell">空头</span>
+      </div>
+      <div class="indicator-row">
+        <span>MA60（60日均线）</span>
+        <span style="color:#555;font-size:12px;">约5.50元</span>
+        <span class="ind-signal signal-sell">下方压制</span>
+      </div>
+      <div class="indicator-row">
+        <span>RSI（14）</span>
+        <span style="color:#555;font-size:12px;">约35</span>
+        <span class="ind-signal signal-buy">接近超卖</span>
+      </div>
+      <div class="indicator-row">
+        <span>MACD</span>
+        <span style="color:#555;font-size:12px;">负值区间</span>
+        <span class="ind-signal signal-neutral">空头格局</span>
+      </div>
+      <div class="indicator-row">
+        <span>布林带</span>
+        <span style="color:#555;font-size:12px;">下轨附近</span>
+        <span class="ind-signal signal-buy">超卖信号</span>
+      </div>
+      <div class="indicator-row">
+        <span>成交量</span>
+        <span style="color:#555;font-size:12px;">萎缩</span>
+        <span class="ind-signal signal-neutral">观望为主</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ④ 市场情绪 -->
+<div class="section" id="sentiment">
+  <div class="section-title">市场情绪分析</div>
+  <div class="grid-3">
+    <div class="card" style="text-align:center;">
+      <div class="chart-title">机构综合评级</div>
+      <div style="display:flex;justify-content:center;margin:14px 0;">
+        <div class="rating-badge rating-buy">买入</div>
+      </div>
+      <div style="font-size:12px;color:#666;line-height:1.6;">26家分析师覆盖<br>强力推荐 80.77% | 买入 19.23%</div>
+    </div>
+    <div class="card">
+      <div class="chart-title">分析师目标价区间</div>
+      <div style="margin-top:10px;">
+        <div class="progress-row">
+          <div class="pr-head"><span>乐观目标价</span><span style="color:#e94560;font-weight:500;">8.5元</span></div>
+          <div class="progress-bar"><div class="progress-fill" style="width:85%;background:#e94560;"></div></div>
+        </div>
+        <div class="progress-row">
+          <div class="pr-head"><span>中性目标价</span><span style="color:#2196f3;font-weight:500;">7.0元</span></div>
+          <div class="progress-bar"><div class="progress-fill" style="width:70%;background:#2196f3;"></div></div>
+        </div>
+        <div class="progress-row">
+          <div class="pr-head"><span>当前价</span><span style="color:#666;">5.02元</span></div>
+          <div class="progress-bar"><div class="progress-fill" style="width:50%;background:#999;"></div></div>
+        </div>
+        <div class="progress-row">
+          <div class="pr-head"><span>保守目标价</span><span style="color:#00c853;font-weight:500;">6.0元</span></div>
+          <div class="progress-bar"><div class="progress-fill" style="width:60%;background:#00c853;"></div></div>
+        </div>
+        <div style="font-size:11px;color:#aaa;margin-top:6px;">机构一致预期2026年净利润60.85亿（+107%）</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="chart-title">投资者情绪仪表盘</div>
+      <div class="chart-wrap" style="height:200px;">
+        <canvas id="sentimentChart" role="img" aria-label="投资者情绪分布">加载中...</canvas>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:16px;">
+    <div class="chart-title" style="margin-bottom:14px;">近期重要新闻与市场事件</div>
+    <div class="news-item">
+      <div class="news-date">2026-06-01</div>
+      <div class="news-title">创视科技"炮轰"分众传媒梯媒排他性竞争，反垄断争议持续发酵，监管不确定性上升。</div>
+      <div class="news-tag"><span class="tag tag-red">负面</span><span class="tag tag-orange">反垄断</span></div>
+    </div>
+    <div class="news-item">
+      <div class="news-date">2026-05-28</div>
+      <div class="news-title">梯媒行业反垄断争议发酵，但分众回应称合并后户外广告市占率仅17.2%，不达法定垄断门槛。</div>
+      <div class="news-tag"><span class="tag tag-blue">政策</span><span class="tag tag-gray">回应</span></div>
+    </div>
+    <div class="news-item">
+      <div class="news-date">2026-04-29</div>
+      <div class="news-title">2025年年报披露：营收增4.05%，但净利润因减值损失暴跌42.85%；2026年Q1净利润17.9亿，环比大幅改善。</div>
+      <div class="news-tag"><span class="tag tag-orange">财报</span><span class="tag tag-green">Q1改善</span></div>
+    </div>
+    <div class="news-item">
+      <div class="news-date">2025-04-14</div>
+      <div class="news-title">分众传媒宣布拟以83亿元收购新潮传媒100%股权，梯媒"双雄"格局终结，重塑行业竞争格局。</div>
+      <div class="news-tag"><span class="tag tag-red">并购</span><span class="tag tag-blue">行业整合</span></div>
+    </div>
+    <div class="news-item">
+      <div class="news-date">2026-02-26</div>
+      <div class="news-title">对联营企业数禾科技计提21.53亿元减值，"跨界投资暴雷"引发市场担忧，股价承压。</div>
+      <div class="news-tag"><span class="tag tag-red">减值</span><span class="tag tag-orange">风险事件</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ⑤ 竞品对比 -->
+<div class="section" id="competition">
+  <div class="section-title">竞品对比分析</div>
+  <div class="grid-2">
+    <div class="card">
+      <div class="chart-title">梯媒市场格局（收购前 vs 收购后）</div>
+      <div class="legend">
+        <span><span class="legend-dot" style="background:#e94560;"></span>收购前</span>
+        <span><span class="legend-dot" style="background:#2196f3;"></span>收购后（预期）</span>
+      </div>
+      <div class="chart-wrap">
+        <canvas id="compShareChart" role="img" aria-label="梯媒市场份额对比">加载中...</canvas>
+      </div>
+    </div>
+    <div class="card">
+      <div class="chart-title">广告行业主要公司营收对比（2024年）</div>
+      <div class="chart-wrap">
+        <canvas id="compRevenueChart" role="img" aria-label="广告公司营收对比">加载中...</canvas>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:16px;">
+    <div class="chart-title" style="margin-bottom:14px;">主要竞争对手财务指标对比</div>
+    <div style="overflow-x:auto;">
+      <table class="comp-table">
+        <thead>
+          <tr>
+            <th>指标</th>
+            <th>分众传媒 (002027)</th>
+            <th>新潮传媒（非上市）</th>
+            <th>分众+新潮（并购后估）</th>
+            <th>行业对比优势</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="highlight">
+            <td>营业收入（2024）</td>
+            <td>122.62亿元</td>
+            <td>~19.8亿元</td>
+            <td>~140亿元+</td>
+            <td>行业第一</td>
+          </tr>
+          <tr>
+            <td>毛利率</td>
+            <td>70.5%</td>
+            <td>估计30-40%</td>
+            <td>预计65%+</td>
+            <td>远超同类</td>
+          </tr>
+          <tr>
+            <td>净利率</td>
+            <td>23.1%（受减值拖累）</td>
+            <td>约2.9%（勉强盈利）</td>
+            <td>预计25%+</td>
+            <td>显著领先</td>
+          </tr>
+          <tr>
+            <td>梯媒市占率</td>
+            <td>约74%</td>
+            <td>约14%</td>
+            <td>约88%+</td>
+            <td>绝对垄断</td>
+          </tr>
+          <tr>
+            <td>点位数量</td>
+            <td>约500万+</td>
+            <td>约130万</td>
+            <td>约630万+</td>
+            <td>规模最大</td>
+          </tr>
+          <tr>
+            <td>写字楼占有率</td>
+            <td>88%</td>
+            <td>约10%</td>
+            <td>95%+</td>
+            <td>垄断优质资源</td>
+          </tr>
+          <tr class="highlight">
+            <td>盈利状态</td>
+            <td>持续高盈利</td>
+            <td>2024年扭亏为盈</td>
+            <td>整合后大幅改善</td>
+            <td>稳定性优</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="chart-title" style="margin-bottom:14px;">行业竞争格局总结</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+      <div style="background:#fef9fb;border-radius:8px;padding:12px;border-left:3px solid #e94560;">
+        <strong style="font-size:12px;color:#e94560;">竞争威胁方（已减弱）</strong>
+        <ul style="margin-top:6px;padding-left:14px;font-size:12px;color:#555;line-height:1.8;">
+          <li>新潮传媒——即将完成并购，威胁消除</li>
+          <li>线上短视频/信息流——挤压广告预算</li>
+          <li>户外大屏广告——低端替代</li>
+          <li>创视科技等小型梯媒——规模差距悬殊</li>
+        </ul>
+      </div>
+      <div style="background:#f0fff4;border-radius:8px;padding:12px;border-left:3px solid #00c853;">
+        <strong style="font-size:12px;color:#2e7d32;">并购新潮后的战略红利</strong>
+        <ul style="margin-top:6px;padding-left:14px;font-size:12px;color:#555;line-height:1.8;">
+          <li>终结价格战，广告单价有望回升</li>
+          <li>整合点位，减少重复租金投入</li>
+          <li>扩大受众规模，提升对广告主议价权</li>
+          <li>新潮业绩并表直接增厚营收</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ⑥ 估值与健康 -->
+<div class="section" id="valuation">
+  <div class="section-title">估值与财务健康</div>
+  <div class="grid-4">
+    <div class="metric-card">
+      <div class="m-lbl">当前PE（TTM）</div>
+      <div class="m-val neutral">约24x</div>
+      <div class="m-change neg">基于2025实际利润</div>
+    </div>
+    <div class="metric-card">
+      <div class="m-lbl">2026预期PE</div>
+      <div class="m-val down">约11.8x</div>
+      <div class="m-change pos">低估区间（机构预期）</div>
+    </div>
+    <div class="metric-card">
+      <div class="m-lbl">PB（市净率）</div>
+      <div class="m-val neutral">约3.5x</div>
+      <div class="m-change neutral">合理区间</div>
+    </div>
+    <div class="metric-card">
+      <div class="m-lbl">股息率</div>
+      <div class="m-val down">约3.8%</div>
+      <div class="m-change pos">高于市场均值</div>
+    </div>
+  </div>
+  <div class="grid-4" style="margin-top:-6px;">
+    <div class="metric-card">
+      <div class="m-lbl">PEG</div>
+      <div class="m-val down">约0.23</div>
+      <div class="m-change pos">PEG&lt;1，显著低估</div>
+    </div>
+    <div class="metric-card">
+      <div class="m-lbl">EV/EBITDA</div>
+      <div class="m-val neutral">约9.5x</div>
+      <div class="m-change neutral">低于行业均值</div>
+    </div>
+    <div class="metric-card">
+      <div class="m-lbl">PE历史分位</div>
+      <div class="m-val down">约15%</div>
+      <div class="m-change pos">5年低位，便宜</div>
+    </div>
+    <div class="metric-card">
+      <div class="m-lbl">FCF Yield</div>
+      <div class="m-val down">约10%</div>
+      <div class="m-change pos">远超国债收益率</div>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="val-section">
+      <h3>PE历史估值区间分析</h3>
+      <div class="chart-wrap">
+        <canvas id="peChart" role="img" aria-label="PE估值历史">加载中...</canvas>
+      </div>
+    </div>
+    <div class="val-section">
+      <h3>DCF估值情景分析</h3>
+      <div style="margin-top:10px;">
+        <div class="progress-row" style="margin-bottom:14px;">
+          <div class="pr-head" style="margin-bottom:6px;"><span style="font-size:12px;color:#c62828;font-weight:500;">悲观情景（净利润50亿，PE12x）</span><span style="color:#c62828;font-weight:500;">约4.0-5.0元</span></div>
+          <div class="progress-bar"><div class="progress-fill" style="width:42%;background:#f44336;"></div></div>
+        </div>
+        <div class="progress-row" style="margin-bottom:14px;">
+          <div class="pr-head" style="margin-bottom:6px;"><span style="font-size:12px;color:#2196f3;font-weight:500;">当前市价</span><span style="color:#2196f3;font-weight:500;">5.02元</span></div>
+          <div class="progress-bar"><div class="progress-fill" style="width:50%;background:#2196f3;"></div></div>
+        </div>
+        <div class="progress-row" style="margin-bottom:14px;">
+          <div class="pr-head" style="margin-bottom:6px;"><span style="font-size:12px;color:#2e7d32;font-weight:500;">中性情景（净利润57-60亿，PE18-20x）</span><span style="color:#2e7d32;font-weight:500;">7.5-8.5元</span></div>
+          <div class="progress-bar"><div class="progress-fill" style="width:80%;background:#00c853;"></div></div>
+        </div>
+        <div class="progress-row">
+          <div class="pr-head" style="margin-bottom:6px;"><span style="font-size:12px;color:#e65100;font-weight:500;">乐观情景（净利润65亿+，PE25x）</span><span style="color:#e65100;font-weight:500;">10元+</span></div>
+          <div class="progress-bar"><div class="progress-fill" style="width:100%;background:#ff9800;"></div></div>
+        </div>
+        <div style="background:#e8f5e9;border-radius:6px;padding:10px;margin-top:12px;font-size:12px;color:#2e7d32;">
+          当前股价5.02元接近悲观情景下沿，机构一致预期2026年净利润60.85亿，对应合理估值7-8.5元区间，安全边际较高。
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="chart-title" style="margin-bottom:14px;">财务健康度评估</div>
+    <div class="health-grid">
+      <div class="health-card">
+        <div class="hc-title">流动性</div>
+        <div class="hc-val" style="color:#00c853;">优秀</div>
+        <div class="hc-desc">经营现金流72亿，远超净利润，流动性充裕</div>
+      </div>
+      <div class="health-card">
+        <div class="hc-title">负债率</div>
+        <div class="hc-val" style="color:#2196f3;">健康</div>
+        <div class="hc-desc">轻资产模式，债务规模可控，无显著财务杠杆风险</div>
+      </div>
+      <div class="health-card">
+        <div class="hc-title">盈利质量</div>
+        <div class="hc-val" style="color:#ff9800;">注意</div>
+        <div class="hc-desc">现金流/净利润&gt;2，主业盈利质量高；但需关注减值风险</div>
+      </div>
+      <div class="health-card">
+        <div class="hc-title">分红持续性</div>
+        <div class="hc-val" style="color:#00c853;">稳定</div>
+        <div class="hc-desc">持续高分红，股息率约3.8%，具备稳定现金回报</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ⑦ 宏观环境 -->
+<div class="section" id="macro">
+  <div class="section-title">宏观环境分析</div>
+
+  <div class="grid-4">
+    <div class="metric-card">
+      <div class="m-lbl">美联储利率</div>
+      <div class="m-val neutral">3.50-3.75%</div>
+      <div class="m-change neg">降息预期归零</div>
+    </div>
+    <div class="metric-card">
+      <div class="m-lbl">美国CPI</div>
+      <div class="m-val up">3.8%</div>
+      <div class="m-change neg">通胀韧性超预期</div>
+    </div>
+    <div class="metric-card">
+      <div class="m-lbl">A股PE分位</div>
+      <div class="m-val yellow">85%</div>
+      <div class="m-change neutral">近十年偏高</div>
+    </div>
+    <div class="metric-card">
+      <div class="m-lbl">中美关系</div>
+      <div class="m-val down">缓和</div>
+      <div class="m-change pos">可控竞争+有限合作</div>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <div class="chart-title">宏观风险传导矩阵</div>
+      <div style="font-size:11px;color:#888;margin-bottom:8px;">气泡大小 = 对本公司的冲击力度</div>
+      <div class="chart-wrap">
+        <canvas id="macroRiskChart" role="img" aria-label="宏观风险概率影响矩阵图">宏观风险矩阵图</canvas>
+      </div>
+    </div>
+    <div class="card">
+      <div class="chart-title">宏观风险对本公司的传导路径</div>
+      <div style="font-size:12px;color:#555;line-height:1.8;margin-top:8px;">
+        <div style="background:#fde8ea;border-radius:6px;padding:10px 12px;margin-bottom:8px;border-left:3px solid #e94560;">
+          <strong style="color:#c62828;">AI/半导体泡沫破裂</strong> → 科技板块大跌 → A股情绪面回落 → <span style="color:#e94560;font-weight:500;">广告主削减预算</span>（互联网广告主集中度高，直接冲击营收）
+        </div>
+        <div style="background:#fff3e0;border-radius:6px;padding:10px 12px;margin-bottom:8px;border-left:3px solid #ff9800;">
+          <strong style="color:#e65100;">美联储维持高利率</strong> → 全球流动性收紧 → 外资流出A股 → <span style="color:#ff9800;font-weight:500;">估值压制</span>（外资偏好消费白马，流出压制估值修复空间）
+        </div>
+        <div style="background:#fff3e0;border-radius:6px;padding:10px 12px;margin-bottom:8px;border-left:3px solid #ff9800;">
+          <strong style="color:#e65100;">中美贸易摩擦升级</strong> → 关税/供应链冲击 → <span style="color:#ff9800;font-weight:500;">影响有限</span>（纯内需广告业务，直接冲击小）
+        </div>
+        <div style="background:#e8f5e9;border-radius:6px;padding:10px 12px;border-left:3px solid #00c853;">
+          <strong style="color:#2e7d32;">国内消费疲弱</strong> → 广告/零售/汽车需求下降 → <span style="color:#2e7d32;font-weight:500;">高度敏感</span>（广告行业是经济晴雨表，消费疲弱直接削减广告投放）
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:16px;">
+    <div class="chart-title" style="margin-bottom:14px;">宏观敏感度评估</div>
+    <div style="overflow-x:auto;">
+      <table class="comp-table">
+        <thead>
+          <tr>
+            <th>宏观风险因子</th>
+            <th>敏感度</th>
+            <th>传导逻辑</th>
+            <th>当前状态</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>AI/半导体泡沫破裂</td>
+            <td><span class="tag tag-red">高</span></td>
+            <td>互联网广告主集中度高，AI泡沫破裂直接削减广告预算</td>
+            <td>结构性破裂中</td>
+          </tr>
+          <tr>
+            <td>美联储高利率</td>
+            <td><span class="tag tag-orange">中</span></td>
+            <td>外资流出压制估值，但公司内需属性强</td>
+            <td>降息预期归零</td>
+          </tr>
+          <tr>
+            <td>中美贸易摩擦</td>
+            <td><span class="tag tag-green">低</span></td>
+            <td>纯内需广告业务，直接冲击小</td>
+            <td>关系缓和</td>
+          </tr>
+          <tr>
+            <td>国内消费疲弱</td>
+            <td><span class="tag tag-red">高</span></td>
+            <td>广告行业是经济晴雨表，消费疲弱直接削减广告投放</td>
+            <td>弱复苏中</td>
+          </tr>
+          <tr>
+            <td>A股整体回调</td>
+            <td><span class="tag tag-orange">中</span></td>
+            <td>市场系统性回调拖累所有个股，但低估值有保护</td>
+            <td>PE分位85%</td>
+          </tr>
+          <tr>
+            <td>人民币贬值</td>
+            <td><span class="tag tag-green">低</span></td>
+            <td>内需为主，汇率影响有限</td>
+            <td>7.25附近</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="chart-title" style="margin-bottom:14px;">需监控的宏观信号</div>
+    <div class="risk-item">
+      <div class="risk-level risk-high">监控</div>
+      <div class="risk-info">
+        <h4>AI/半导体板块走势</h4>
+        <p>英伟达或A股半导体连续3日暴跌 → 科技板块情绪崩塌 → 广告主可能削减预算。触发动作：减仓至防御。</p>
+      </div>
+    </div>
+    <div class="risk-item">
+      <div class="risk-level risk-mid">监控</div>
+      <div class="risk-info">
+        <h4>美联储议息会议</h4>
+        <p>每次FOMC会议释放鹰/鸽信号 → 影响全球流动性预期 → 外资流入/流出A股。鹰派则减仓。</p>
+      </div>
+    </div>
+    <div class="risk-item">
+      <div class="risk-level risk-mid">监控</div>
+      <div class="risk-info">
+        <h4>中国PMI / 社零数据</h4>
+        <p>制造业PMI跌破50或社零增速低于预期 → 消费疲弱信号 → 广告行业首当其冲。数据恶化则谨慎。</p>
+      </div>
+    </div>
+    <div class="risk-item">
+      <div class="risk-level risk-low">监控</div>
+      <div class="risk-info">
+        <h4>人民币汇率</h4>
+        <p>USD/CNY突破7.5 → 资本外流压力上升 → 全市场情绪受压。突破则全组合减仓1成。</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ⑧ 主要风险 -->
+<div class="section" id="risk">
+  <div class="section-title">主要风险识别</div>
+  <div class="card" style="margin-bottom:16px;">
+    <div class="chart-title" style="margin-bottom:14px;">风险矩阵（概率 × 影响）</div>
+    <div class="chart-wrap">
+      <canvas id="riskChart" role="img" aria-label="风险矩阵图">加载中...</canvas>
+    </div>
+  </div>
+  <div class="card">
+    <div class="chart-title" style="margin-bottom:14px;">关键风险详情</div>
+    <div class="risk-item">
+      <div class="risk-level risk-high">高风险</div>
+      <div class="risk-info">
+        <h4>反垄断政策风险</h4>
+        <p>收购新潮传媒后梯媒市占率超80%，创视科技等已公开举报其排他性竞争。深交所已下发问询函，监管审查若趋严，可能影响并购落地甚至面临业务整改要求，是当前最大不确定因素。</p>
+      </div>
+    </div>
+    <div class="risk-item">
+      <div class="risk-level risk-high">高风险</div>
+      <div class="risk-info">
+        <h4>宏观广告景气度风险</h4>
+        <p>广告收入与经济周期高度相关，消费类广告主（日用消费品、房产、通讯等）2025年收入已大幅下滑，宏观经济若持续疲软，广告主削减预算将直接影响营收增长。</p>
+      </div>
+    </div>
+    <div class="risk-item">
+      <div class="risk-level risk-mid">中风险</div>
+      <div class="risk-info">
+        <h4>线上媒体替代风险</h4>
+        <p>短视频（抖音、快手）、私域营销等线上渠道持续吸引广告预算，中小品牌客户可能被线上渠道分流，但高端品牌仍依赖梯媒做"品牌心智"建设，影响偏中期。</p>
+      </div>
+    </div>
+    <div class="risk-item">
+      <div class="risk-level risk-mid">中风险</div>
+      <div class="risk-info">
+        <h4>投资减值/跨界风险</h4>
+        <p>2025年数禾科技减值25亿元一次性影响业绩，暴露了公司跨界投资决策能力存疑的问题。若公司继续在非核心业务投资中出现损失，将严重侵蚀股东利益。</p>
+      </div>
+    </div>
+    <div class="risk-item">
+      <div class="risk-level risk-mid">中风险</div>
+      <div class="risk-info">
+        <h4>并购整合风险</h4>
+        <p>83亿元收购新潮传媒体量巨大，反垄断审查结果仍不明朗，整合过程中团队融合、点位重叠优化等挑战复杂，若整合不力将使并购协同效益大打折扣。</p>
+      </div>
+    </div>
+    <div class="risk-item">
+      <div class="risk-level risk-low">低风险</div>
+      <div class="risk-info">
+        <h4>地缘与海外市场风险</h4>
+        <p>分众在东南亚、日韩等地有布局，占比较小。地缘政治紧张可能影响跨国品牌在华广告投放，但国内广告市场主体以本土品牌为主，整体影响可控。</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px;">
+    <div class="chart-title" style="margin-bottom:14px;">压力测试（情景量化分析）</div>
+    <div style="overflow-x:auto;">
+      <table class="comp-table">
+        <thead>
+          <tr>
+            <th>压力情景</th>
+            <th>关键假设变化</th>
+            <th>净利润影响</th>
+            <th>对应PE</th>
+            <th>隐含股价</th>
+            <th>较当前跌幅</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>悲观：反垄断否决+广告景气回落</td>
+            <td>毛利率-5pct，并购终止，营收-8%</td>
+            <td style="color:#c62828;font-weight:500;">约35亿</td>
+            <td>20x</td>
+            <td style="color:#c62828;font-weight:500;">约4.3元</td>
+            <td><span class="tag tag-red">-14%</span></td>
+          </tr>
+          <tr>
+            <td>中性：并购延迟+温和复苏</td>
+            <td>毛利率-2pct，并购延迟6个月</td>
+            <td style="color:#e65100;font-weight:500;">约50亿</td>
+            <td>16x</td>
+            <td style="color:#e65100;font-weight:500;">约4.9元</td>
+            <td><span class="tag tag-orange">-2%</span></td>
+          </tr>
+          <tr>
+            <td>乐观：并购顺利+广告复苏</td>
+            <td>毛利率+2pct，新潮并表增厚</td>
+            <td style="color:#2e7d32;font-weight:500;">约65亿</td>
+            <td>18x</td>
+            <td style="color:#2e7d32;font-weight:500;">约7.2元</td>
+            <td><span class="tag tag-green">+43%</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div style="background:#f8f8fc;border-radius:6px;padding:10px;margin-top:10px;font-size:12px;color:#555;line-height:1.6;">
+      <strong>结论：</strong>即使在悲观情景下，股价下行空间约14%，安全边际较高；乐观情景上涨空间43%，风险收益比不对称，偏向看好。
+    </div>
+  </div>
+</div>
+
+<!-- ⑨ 结论建议 -->
+<div class="section" id="conclusion">
+  <div class="section-title">综合结论与投资建议</div>
+  <div class="grid-3" style="margin-bottom:16px;">
+    <div class="metric-card" style="border-top:3px solid #e94560;">
+      <div class="m-lbl">短期建议（1-3个月）</div>
+      <div class="m-val up" style="font-size:16px;">谨慎观望</div>
+      <div class="m-change neutral" style="font-size:11px;line-height:1.5;margin-top:6px;">股价近52周低位，技术面偏弱，反垄断审查悬而未决，建议等待催化剂</div>
+    </div>
+    <div class="metric-card" style="border-top:3px solid #2196f3;">
+      <div class="m-lbl">中期建议（3-12个月）</div>
+      <div class="m-val neutral" style="font-size:16px;">逢低布局</div>
+      <div class="m-change neutral" style="font-size:11px;line-height:1.5;margin-top:6px;">2026年业绩有望大幅反弹，并购落地是关键催化，合理目标价7-8元</div>
+    </div>
+    <div class="metric-card" style="border-top:3px solid #00c853;">
+      <div class="m-lbl">长期建议（1年以上）</div>
+      <div class="m-val down" style="font-size:16px;">积极持有</div>
+      <div class="m-change neutral" style="font-size:11px;line-height:1.5;margin-top:6px;">护城河深厚，高现金流+高分红，并购后垄断格局加固，具备长期配置价值</div>
+    </div>
+  </div>
+
+  <div class="conclusion-box bull">
+    <h3>核心多头逻辑（看多理由）</h3>
+    <ul>
+      <li><strong>利润超跌修复：</strong>2025年净利润下滑42%的核心原因是非经常性减值（25亿元），主业扣非净利润27亿实际稳健，2026年将大幅修复至约60亿元，对应当前PE仅11.8倍。</li>
+      <li><strong>并购重塑格局：</strong>收购新潮传媒后，梯媒市占率超80%，价格战终结，单价回升+成本优化有望带动利润率显著提升。</li>
+      <li><strong>估值底部区间：</strong>当前股价接近历史低位（52周低点4.70元），安全边际突出，机构目标价7-8.5元意味着40-70%的上涨空间。</li>
+      <li><strong>高分红+高现金流：</strong>经营现金流持续远超净利润，分红股息率约3.8%，具备"防御+进攻"双重属性。</li>
+    </ul>
+  </div>
+
+  <div class="conclusion-box bear">
+    <h3>主要空头逻辑（需警惕风险）</h3>
+    <ul>
+      <li><strong>反垄断审查悬念：</strong>并购新潮传媒的反垄断审查如受阻，不仅整合红利泡汤，还可能引发更广泛的业务合规整改。</li>
+      <li><strong>广告主结构切换：</strong>传统日化、房产、通讯类广告主持续收缩，互联网行业虽大幅增长但集中度过高，抗风险性弱。</li>
+      <li><strong>跨界投资信任危机：</strong>数禾科技减值事件暴露公司管理层在非核心业务上的失误，若再次出现类似投资损失将重创市场信心。</li>
+    </ul>
+  </div>
+
+  <div class="conclusion-box neutral">
+    <h3>关键观察指标（持续追踪）</h3>
+    <ul>
+      <li><strong>反垄断审查进展：</strong>预计2026年Q2-Q3出结果，通过则是最大催化剂，受阻则是最大利空。</li>
+      <li><strong>2026年季度业绩：</strong>Q1净利润17.9亿已强劲反弹（+57.65%），关注Q2/Q3能否延续，全年净利润能否达机构预期的60亿+。</li>
+      <li><strong>广告主行业分散度：</strong>互联网行业占比从12%飙升至25%，观察是否持续集中，若其他行业客户回暖则大幅利好。</li>
+      <li><strong>股价4.70元支撑：</strong>若跌破2024年以来低点4.70元，需重新评估下行空间；若突破6.7元阻力，则短期趋势确认反转。</li>
+    </ul>
+  </div>
+
+  <div style="background:#1a1a2e;border-radius:10px;padding:18px 22px;color:#fff;margin-top:6px;">
+    <div style="font-size:14px;font-weight:500;color:#ffd700;margin-bottom:10px;">综合评分</div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">
+      <div style="text-align:center;">
+        <div style="font-size:24px;font-weight:700;color:#e94560;">A-</div>
+        <div style="font-size:11px;color:rgba(255,255,255,0.5);margin-top:3px;">护城河质量</div>
+      </div>
+      <div style="text-align:center;">
+        <div style="font-size:24px;font-weight:700;color:#0be881;">B+</div>
+        <div style="font-size:11px;color:rgba(255,255,255,0.5);margin-top:3px;">财务健康</div>
+      </div>
+      <div style="text-align:center;">
+        <div style="font-size:24px;font-weight:700;color:#ffd700;">B</div>
+        <div style="font-size:11px;color:rgba(255,255,255,0.5);margin-top:3px;">成长确定性</div>
+      </div>
+      <div style="text-align:center;">
+        <div style="font-size:24px;font-weight:700;color:#0be881;">A</div>
+        <div style="font-size:11px;color:rgba(255,255,255,0.5);margin-top:3px;">当前性价比</div>
+      </div>
+    </div>
+    <div style="margin-top:14px;font-size:11px;color:rgba(255,255,255,0.45);line-height:1.7;">
+      ⚠ 本报告仅供参考，不构成投资建议。股市有风险，投资需谨慎。数据截至2026年6月19日。
+    </div>
+  </div>
+</div>
+
+</div><!-- /content -->
+
+<script>
+function showSection(id, btn) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  btn.classList.add('active');
+}
+
+const commonOpts = {
+  responsive: true, maintainAspectRatio: false,
+  plugins: { legend: { display: false }, tooltip: { backgroundColor: '#1a1a2e', titleColor: '#fff', bodyColor: '#ccc', padding: 10, cornerRadius: 6 } }
+};
+
+new Chart(document.getElementById('marketShareChart'), {
+  type: 'doughnut',
+  data: {
+    labels: ['分众传媒', '新潮传媒', '其他'],
+    datasets: [{ data: [74, 14, 12], backgroundColor: ['#e94560', '#2196f3', '#ccc'], borderWidth: 0 }]
+  },
+  options: { ...commonOpts, cutout: '55%', plugins: { ...commonOpts.plugins, tooltip: { ...commonOpts.plugins.tooltip, callbacks: { label: c => c.label + ': ' + c.parsed + '%' } } } }
+});
+
+new Chart(document.getElementById('revenueStructChart'), {
+  type: 'bar',
+  data: {
+    labels: ['互联网', '日用消费品', '医疗健康', '食品饮料', '房产家居', '通讯', '其他'],
+    datasets: [{
+      label: '收入（亿元）',
+      data: [32.4, 28.5, 15.2, 14.8, 10.3, 8.9, 17.5],
+      backgroundColor: ['#e94560','#2196f3','#00c853','#ffd700','#ff9800','#9c27b0','#999']
+    }]
+  },
+  options: { ...commonOpts, scales: { x: { ticks: { color: '#888', font: { size: 11 } }, grid: { display: false } }, y: { ticks: { color: '#888', font: { size: 11 } }, grid: { color: '#f0f0f0' } } }, plugins: { ...commonOpts.plugins, tooltip: { ...commonOpts.plugins.tooltip, callbacks: { label: c => c.parsed.y.toFixed(1) + '亿元' } } } }
+});
+
+new Chart(document.getElementById('revenueChart'), {
+  type: 'bar',
+  data: {
+    labels: ['2019', '2020', '2021', '2022', '2023', '2024', '2025'],
+    datasets: [
+      { label: '营收', data: [145.5, 120.0, 145.2, 88.8, 119.6, 122.6, 127.6], backgroundColor: 'rgba(33,150,243,0.7)', yAxisID: 'y' },
+      { label: '净利润', type: 'line', data: [57.0, 23.7, 60.6, 13.0, 46.8, 51.6, 29.5], borderColor: '#e94560', backgroundColor: 'rgba(233,69,96,0.1)', tension: 0.4, fill: true, pointRadius: 4, pointBackgroundColor: '#e94560', yAxisID: 'y' }
+    ]
+  },
+  options: { ...commonOpts, scales: { x: { ticks: { color: '#888', font: { size: 11 } }, grid: { display: false } }, y: { ticks: { color: '#888', font: { size: 11 }, callback: v => v + '亿' }, grid: { color: '#f0f0f0' } } } }
+});
+
+new Chart(document.getElementById('marginChart'), {
+  type: 'line',
+  data: {
+    labels: ['2019', '2020', '2021', '2022', '2023', '2024', '2025'],
+    datasets: [
+      { label: '毛利率', data: [68.2, 64.5, 70.1, 57.3, 63.8, 66.3, 70.5], borderColor: '#00c853', backgroundColor: 'rgba(0,200,83,0.08)', tension: 0.4, fill: true, pointRadius: 4, pointBackgroundColor: '#00c853' },
+      { label: '净利率', data: [39.2, 19.8, 41.7, 14.6, 39.1, 42.1, 23.1], borderColor: '#ffd700', backgroundColor: 'rgba(255,215,0,0.08)', tension: 0.4, fill: true, pointRadius: 4, pointBackgroundColor: '#ffd700' }
+    ]
+  },
+  options: { ...commonOpts, scales: { x: { ticks: { color: '#888', font: { size: 11 } }, grid: { display: false } }, y: { ticks: { color: '#888', font: { size: 11 }, callback: v => v + '%' }, grid: { color: '#f0f0f0' }, min: 0, max: 80 } } }
+});
+
+new Chart(document.getElementById('cashflowChart'), {
+  type: 'bar',
+  data: {
+    labels: ['2021', '2022', '2023', '2024', '2025'],
+    datasets: [
+      { label: '经营现金流', data: [79.2, 52.6, 74.3, 66.4, 72.1], backgroundColor: 'rgba(0,200,83,0.7)' },
+      { label: '归母净利润', data: [60.6, 13.0, 46.8, 51.6, 29.5], backgroundColor: 'rgba(233,69,96,0.7)' },
+      { label: '资本支出', data: [-8.2, -6.8, -7.5, -9.8, -5.3], backgroundColor: 'rgba(158,158,158,0.6)' }
+    ]
+  },
+  options: { ...commonOpts, scales: { x: { ticks: { color: '#888', font: { size: 11 } }, grid: { display: false } }, y: { ticks: { color: '#888', font: { size: 11 }, callback: v => v + '亿' }, grid: { color: '#f0f0f0' } } }, plugins: { ...commonOpts.plugins, legend: { display: true, position: 'top', labels: { color: '#666', font: { size: 11 }, boxWidth: 12 } } } }
+});
+
+new Chart(document.getElementById('dupontChart'), {
+  type: 'bar',
+  data: {
+    labels: ['2023', '2024', '2025'],
+    datasets: [
+      { label: 'ROE (%)', type: 'line', data: [32.5, 29.9, 18.3], borderColor: '#e94560', backgroundColor: 'rgba(233,69,96,0.1)', tension: 0.4, fill: true, pointRadius: 5, pointBackgroundColor: '#e94560', yAxisID: 'y1' },
+      { label: '净利率 (%)', data: [39.1, 42.1, 23.1], backgroundColor: 'rgba(33,150,243,0.6)', yAxisID: 'y2' },
+      { label: '资产周转率', data: [0.55, 0.53, 0.50], backgroundColor: 'rgba(0,200,83,0.6)', yAxisID: 'y3' },
+      { label: '权益乘数', data: [1.51, 1.34, 1.58], backgroundColor: 'rgba(255,215,0,0.6)', yAxisID: 'y3' }
+    ]
+  },
+  options: {
+    ...commonOpts,
+    scales: {
+      x: { ticks: { color: '#888', font: { size: 11 } }, grid: { display: false } },
+      y1: { type: 'linear', position: 'left', min: 0, max: 40, title: { display: true, text: 'ROE (%)', color: '#e94560', font: { size: 10 } }, ticks: { color: '#e94560', font: { size: 10 }, callback: v => v + '%' }, grid: { color: '#f0f0f0' } },
+      y2: { type: 'linear', position: 'right', min: 0, max: 50, title: { display: true, text: '净利率 (%)', color: '#2196f3', font: { size: 10 } }, ticks: { color: '#2196f3', font: { size: 10 }, callback: v => v + '%' }, grid: { display: false } },
+      y3: { display: false, min: 0, max: 2 }
+    },
+    plugins: { ...commonOpts.plugins, legend: { display: true, position: 'top', labels: { color: '#666', font: { size: 10 }, boxWidth: 12 } } }
+  }
+});
+
+new Chart(document.getElementById('priceChart'), {
+  type: 'line',
+  data: {
+    labels: ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec','2026Q1','Jun26'],
+    datasets: [{
+      label: '股价',
+      data: [7.2, 7.8, 6.5, 6.3, 6.0, 5.8, 6.2, 6.5, 6.8, 7.2, 6.5, 5.8, 5.4, 5.02],
+      borderColor: '#e94560', backgroundColor: 'rgba(233,69,96,0.06)', tension: 0.4, fill: true, pointRadius: 3, pointBackgroundColor: '#e94560'
+    }]
+  },
+  options: {
+    ...commonOpts,
+    scales: {
+      x: { ticks: { color: '#888', font: { size: 11 } }, grid: { color: '#f5f5f5' } },
+      y: { ticks: { color: '#888', font: { size: 11 }, callback: v => '¥' + v }, grid: { color: '#f5f5f5' }, min: 4.5, max: 9.0 }
+    },
+    plugins: { ...commonOpts.plugins,
+      annotation: { annotations: {
+        support: { type: 'line', yMin: 4.7, yMax: 4.7, borderColor: '#00c853', borderWidth: 1.5, borderDash: [4,4] },
+        resist: { type: 'line', yMin: 6.7, yMax: 6.7, borderColor: '#e94560', borderWidth: 1.5, borderDash: [4,4] }
+      }}
+    }
+  }
+});
+
+new Chart(document.getElementById('sentimentChart'), {
+  type: 'doughnut',
+  data: {
+    labels: ['看多', '中性', '看空'],
+    datasets: [{ data: [55, 30, 15], backgroundColor: ['#e94560', '#ffd700', '#00c853'], borderWidth: 0 }]
+  },
+  options: { ...commonOpts, cutout: '60%', plugins: { ...commonOpts.plugins, tooltip: { ...commonOpts.plugins.tooltip, callbacks: { label: c => c.label + ': ' + c.parsed + '%' } } } }
+});
+
+new Chart(document.getElementById('compShareChart'), {
+  type: 'bar',
+  data: {
+    labels: ['收购前', '收购后（预期）'],
+    datasets: [
+      { label: '分众传媒', data: [74, 88], backgroundColor: '#e94560' },
+      { label: '新潮传媒', data: [14, 0], backgroundColor: '#2196f3' },
+      { label: '其他', data: [12, 12], backgroundColor: '#ccc' }
+    ]
+  },
+  options: { ...commonOpts, scales: { x: { stacked: true, ticks: { color: '#888', font: { size: 12 } }, grid: { display: false } }, y: { stacked: true, max: 100, ticks: { color: '#888', callback: v => v + '%' }, grid: { color: '#f0f0f0' } } }, plugins: { ...commonOpts.plugins, legend: { display: true, position: 'top', labels: { color: '#666', font: { size: 11 }, boxWidth: 12 } } } }
+});
+
+new Chart(document.getElementById('compRevenueChart'), {
+  type: 'bar',
+  data: {
+    labels: ['分众传媒', '分众+新潮\n(并购后)', '新潮传媒\n(非上市)', '蓝色光标\n(A股)'],
+    datasets: [{
+      label: '营收（亿元）',
+      data: [122.6, 140, 19.8, 88],
+      backgroundColor: ['#e94560', '#ff9800', '#2196f3', '#999']
+    }]
+  },
+  options: { ...commonOpts, scales: { x: { ticks: { color: '#888', font: { size: 11 } }, grid: { display: false } }, y: { ticks: { color: '#888', font: { size: 11 }, callback: v => v + '亿' }, grid: { color: '#f0f0f0' } } } }
+});
+
+new Chart(document.getElementById('peChart'), {
+  type: 'line',
+  data: {
+    labels: ['2020', '2021', '2022', '2023', '2024', '2025TTM', '2026E'],
+    datasets: [
+      { label: 'PE', data: [55, 28, 92, 22, 18, 24, 11.8], borderColor: '#2196f3', backgroundColor: 'rgba(33,150,243,0.08)', tension: 0.4, fill: true, pointRadius: 4, pointBackgroundColor: '#2196f3' },
+      { label: '历史均值PE', data: [35, 35, 35, 35, 35, 35, 35], borderColor: '#888', borderDash: [4, 4], borderWidth: 1.5, pointRadius: 0 }
+    ]
+  },
+  options: { ...commonOpts, scales: { x: { ticks: { color: '#888', font: { size: 11 } }, grid: { display: false } }, y: { ticks: { color: '#888', font: { size: 11 }, callback: v => v + 'x' }, grid: { color: '#f0f0f0' }, min: 0, max: 110 } }, plugins: { ...commonOpts.plugins, legend: { display: true, position: 'top', labels: { color: '#666', font: { size: 11 }, boxWidth: 12 } } } }
+});
+
+new Chart(document.getElementById('macroRiskChart'), {
+  type: 'bubble',
+  data: {
+    datasets: [
+      { label: 'AI半导体泡沫破裂', data: [{ x: 75, y: 55, r: 18 }], backgroundColor: 'rgba(233,69,96,0.5)', borderColor: '#e94560', borderWidth: 2 },
+      { label: '美联储高利率', data: [{ x: 90, y: 40, r: 14 }], backgroundColor: 'rgba(233,69,96,0.5)', borderColor: '#e94560', borderWidth: 2 },
+      { label: '中美贸易摩擦', data: [{ x: 45, y: 30, r: 10 }], backgroundColor: 'rgba(255,152,0,0.5)', borderColor: '#ff9800', borderWidth: 2 },
+      { label: '国内消费疲弱', data: [{ x: 50, y: 70, r: 17 }], backgroundColor: 'rgba(233,69,96,0.5)', borderColor: '#e94560', borderWidth: 2 },
+      { label: 'A股估值回调', data: [{ x: 55, y: 50, r: 13 }], backgroundColor: 'rgba(255,152,0,0.5)', borderColor: '#ff9800', borderWidth: 2 },
+      { label: '人民币贬值', data: [{ x: 30, y: 25, r: 8 }], backgroundColor: 'rgba(0,200,83,0.5)', borderColor: '#00c853', borderWidth: 2 }
+    ]
+  },
+  options: {
+    ...commonOpts,
+    scales: {
+      x: { min: 0, max: 100, title: { display: true, text: '发生概率 (%)', color: '#888', font: { size: 11 } }, ticks: { color: '#888', font: { size: 11 }, callback: v => v + '%' }, grid: { color: '#f5f5f5' } },
+      y: { min: 0, max: 100, title: { display: true, text: '对公司影响程度', color: '#888', font: { size: 11 } }, ticks: { color: '#888', font: { size: 11 } }, grid: { color: '#f5f5f5' } }
+    },
+    plugins: { ...commonOpts.plugins, legend: { display: true, position: 'right', labels: { color: '#666', font: { size: 10 }, boxWidth: 10 } } }
+  }
+});
+
+new Chart(document.getElementById('riskChart'), {
+  type: 'bubble',
+  data: {
+    datasets: [
+      { label: '反垄断风险', data: [{ x: 0.65, y: 0.85, r: 18 }], backgroundColor: 'rgba(233,69,96,0.65)' },
+      { label: '宏观景气度', data: [{ x: 0.7, y: 0.75, r: 16 }], backgroundColor: 'rgba(233,69,96,0.5)' },
+      { label: '减值/投资风险', data: [{ x: 0.45, y: 0.8, r: 14 }], backgroundColor: 'rgba(255,152,0,0.65)' },
+      { label: '线上替代', data: [{ x: 0.75, y: 0.5, r: 12 }], backgroundColor: 'rgba(255,152,0,0.5)' },
+      { label: '并购整合', data: [{ x: 0.5, y: 0.65, r: 13 }], backgroundColor: 'rgba(255,152,0,0.55)' },
+      { label: '地缘风险', data: [{ x: 0.3, y: 0.3, r: 8 }], backgroundColor: 'rgba(0,200,83,0.5)' }
+    ]
+  },
+  options: {
+    ...commonOpts,
+    scales: {
+      x: { min: 0, max: 1, title: { display: true, text: '发生概率', color: '#888', font: { size: 11 } }, ticks: { color: '#888', font: { size: 11 }, callback: v => ['极低','低','中','高','极高'][Math.round(v*4)] }, grid: { color: '#f5f5f5' } },
+      y: { min: 0, max: 1, title: { display: true, text: '潜在影响', color: '#888', font: { size: 11 } }, ticks: { color: '#888', font: { size: 11 }, callback: v => ['极低','低','中','高','极高'][Math.round(v*4)] }, grid: { color: '#f5f5f5' } }
+    },
+    plugins: { ...commonOpts.plugins, legend: { display: true, position: 'right', labels: { color: '#666', font: { size: 10 }, boxWidth: 10 } } }
+  }
+});
+</script>
+</body>
+</html>
