@@ -51,5 +51,22 @@ desktop.ini
 # CodeBuddy 本地数据
 .codebuddy/
 
+# AI Agent 工作目录
+.claude/
+.cursor/
+.codex/
+.agents/
+.agent/
+.windsurf/
+.aider*
+.copilot/
+.continue/
+.cline/
+.gemini/
+.kiro/
+.tracing/
+CLAUDE.md
+AGENTS.md
+
 # YouTube 下载工作目录
 freelancers/
