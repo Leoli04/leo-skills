@@ -107,7 +107,7 @@ def check_counts(html):
         # 取 checklist section 之后的 li 总数
         idx = html.find('id="checklist"')
         seg = html[idx:] if idx >= 0 else html
-        actual = len(re.findall(r'<li class="(?:ok|no|warn)"', seg))
+        actual = len(re.findall(r'<li class="(?:ok|no|warn|na)"', seg))
         if actual == 0:
             actual = len(re.findall(r"<li\b", seg))
         if claimed != actual:
