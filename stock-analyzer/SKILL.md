@@ -1,202 +1,434 @@
 ---
 name: stock-analyzer
-description: |-
-  Comprehensive stock investment analysis with interactive HTML reports. This skill should be used when the user requests a full analysis of any publicly listed stock. Trigger phrases include: "分析XX股票", "XX公司全面分析", "帮我分析XX", "investment analysis for XX", "stock analysis", "股票分析报告", "对XX进行估值分析", "XX股票怎么样", "投资分析". The skill produces a polished 9-section interactive dashboard covering business overview, financials, technical analysis, market sentiment, competitor comparison, valuation & health, macro environment, risks, and investment recommendations — including portfolio position advice when the user provides their holdings.
+description: '个股投资分析：以 A 股通用方法论 v2.3 的 10 步流水线为骨架，产出可交互 HTML 报告。触发词包括「分析XX股票」「XX公司全面分析」「帮我分析XX」「XX股票怎么样」「对XX进行估值分析」「XX值不值得买」「stock analysis」「investment analysis」等。覆盖选锚定位、价格分位、盈利趋势与质量、资产负债表、行业横向、催化传导、筹码与公司行为、估值赔率（折现+概率加权）、前奏态扫描、验证与退出，附 43 条红线、26 个陷阱、38 项自检；用户给出持仓时追加仓位建议。'
 agent_created: true
 ---
 
-# Stock Analyzer
+# Stock Analyzer · 个股分析（方法论 v2.3 落地版）
 
 ## Overview
 
-Produce a comprehensive, interactive HTML investment report for any publicly listed stock. The report covers nine standardized analytical dimensions (eight company-level + one macro-level) and supports portfolio position advice. The output is a self-contained HTML file using Chart.js for data visualization and a responsive tabbed navigation UI.
+用一个固定顺序的 10 步流水线回答四个问题，产出一份自包含的交互式 HTML 报告。
+
+四个问题（顺序错一步，后面全部作废）：
+1. **它赚的是什么钱？** 利润驱动还是估值驱动 —— 决定用哪把尺子
+2. **现在贵不贵？** 跟自己历史分位比，不是跟跌幅比
+3. **利润是真的吗？** 扣非、现金流、一次性、研发刚性
+4. **谁在买、谁在卖？** 筹码结构决定「便宜」能不能兑现
+
+三条铁律：
+- **任何跨年度目标价，必须时间折现 + 概率加权。** 未做这两道处理的目标价，一律视为卖方营销材料。
+- **任何结论必须附带下一个验证点（指标 + 阈值 + 时间窗）。** 没有验证点的结论是观点，不是分析。
+- **买入成本是心理锚，市场不认。** 不以「回本」为决策依据。
 
 ## When to Use
 
-Trigger this skill when the user asks for any kind of stock analysis — from a full deep-dive to a targeted question about valuation or risks. Common triggers:
+- 「分析分众传媒」/「全面分析XX」/「XX的投资分析报告」
+- 「XX股票怎么样」/「XX值得投资吗」/「XX能买吗」
+- 「帮我看看XX的财务数据」/「XX的估值合理吗」/「XX为什么跌」
+- 用户附带持仓（如「我持有3成仓，成本5.3元」）→ 追加仓位建议章节
 
-- "分析分众传媒" / "全面分析XX" / "XX的投资分析报告"
-- "XX股票怎么样" / "XX值得投资吗"
-- "帮我看看XX的财务数据" / "XX的估值合理吗"
-- "I want an analysis of Tesla stock"
+---
 
-If the user also mentions their holding position (e.g., "我持有3成仓位，成本5.3元"), append a personalized position advice section after the nine main sections.
+## 使用顺序（不可颠倒）
+
+| 步骤 | 名称 | 一句话判据 |
+|---|---|---|
+| 第 0 步 | 选对估值锚 | 先归类，再谈贵贱 |
+| 第 1 步 | 价格位置 | 用分位，不用跌幅 |
+| 第 2 步 | 盈利趋势 | 单季环比，双重拆解 |
+| 第 3 步 | 盈利质量 | 剔干净还剩多少 |
+| 第 4 步 | 资产负债表 | 亏损公司看净资产 |
+| 第 5 步 | 行业横向 | 看营收同比，不看亏损 |
+| 第 6 步 | 催化与事件传导 | 先验链条是否贯通 |
+| 第 7 步 | 筹码与公司行为 | 便宜能不能兑现 |
+| 第 8 步 | 估值与赔率 | 折现 + 概率加权 |
+| 第 9 步 | 前奏态扫描 | 仅「找标的」时走 |
+| 第 10 步 | 验证与退出 | 指标 + 阈值 + 时间窗 |
+
+三种典型颠倒失败（用来自查是否跳步）：
+1. 先算价再验形态 → 尺子错了，整个估值过程无意义
+2. 先看筹码再验利润 → 把派发当吸筹
+3. 先看跌幅再查分位 → 把下跌当便宜，忽略「PE 低是因为盈利在顶」
+
+**横切层（不参与选股）**：`references/methodology.md` 第 04 节《周期股专章》、第 05 节《环境与传导》、第 08 节《技术面与时序》。周期类标的在第 0 步之后先走周期专章。技术面**只服务择时与风控**，不得用于选股或估值，不得由「跌破支撑」反推基本面变坏。
+
+---
 
 ## Workflow
 
-### Phase 1: Research & Data Gathering
+### Phase 0: 前置 · 口径确认（读表之前必做）
 
-Use WebSearch to gather current data across all analysis dimensions. Execute multiple searches in parallel where possible. At minimum, cover:
+口径错了，后面所有比率都不可比，而且错得很隐蔽。逐条核对（全文见 `references/methodology.md` §02）：
 
-**Financial Data:**
-- Latest annual and quarterly reports (营收, 净利润, 扣非净利润, 毛利率, 净利率, ROE, EPS, 经营现金流)
-- Multiple years of historical data for trend analysis
-- Any one-time items (asset impairments, investment gains/losses) that distort net profit
-- **DuPont decomposition data**: net margin, asset turnover ratio, equity multiplier (leverage) for at least 3 years — to decompose ROE into its driving factors and identify whether ROE changes are driven by profitability, efficiency, or leverage
-- **Asset quality indicators**: goodwill as % of net assets, accounts receivable turnover, inventory turnover, other receivables ratio — to detect potential impairment risks and earnings manipulation signals
-- **Growth drivers breakdown**: revenue CAGR (3yr & 5yr), net profit CAGR, and whether growth is organic (same-store / volume) or M&A-driven — distinguish sustainable growth from acquisition-driven growth
+| 陷阱 | 正确处理 |
+|---|---|
+| 会计政策切换（如百货总额法→净额法） | 跨年只有 ROE 与归母可直比；收入、毛利率一律不可直比 |
+| A/H 双重上市 | 报表口径与股价口径分开算；A/H 溢价单独处理 |
+| 上市公司 ≠ 集团体系 | 只用上市公司披露口径，集团数据仅作背景 |
+| 权益法投资收益（如持股银行） | 报表照记利润，但**禁止**用于偿债/分红/回购能力测算 |
+| 北交所代码 | 一律用新 920xxx 段 |
+| 定增后 PB 下降 | 用摊薄后股本重算，同步看摊薄 EPS 与 PE |
+| 分红率口径不一 | 用 DividendTTM 交叉验证；TTM 亏损标 `n.m.`，不得填 0 |
+| 高股息标的前复权价失真 | 高股息标的禁用前复权价，改市值口径 |
 
-**Market Data:**
-- Current stock price, 52-week high/low, market cap
-- Recent price trends and technical indicators (moving averages, RSI, MACD, volume)
-- Key support and resistance levels
+### Phase 1: 第 0 步 · 选对估值锚（15 类形态）
 
-**Industry & Competition:**
-- Market share data (company vs competitors)
-- Competitor financial metrics for comparison table
-- Industry structure and the company's competitive position
-- **Porter's Five Forces assessment**: rate each force (supplier power, buyer power, competitive rivalry, threat of new entrants, threat of substitutes) as High/Medium/Low with a one-sentence justification — this structures the industry analysis beyond simple market share
-- **Industry chain analysis**: identify the company's position in the upstream/downstream value chain, key suppliers and major customers, and whether the company has pricing power
-- **Industry lifecycle stage**: determine whether the industry is in growth, maturity, or decline phase, and the 5-year TAM (Total Addressable Market) outlook
+同一家公司用错尺子，结论可以完全相反。**「禁用」一栏是硬约束** —— 用禁用的尺子得出的结论，无论多合理都不采纳。
 
-**Sentiment & News:**
-- Analyst ratings and target prices (number of analysts covering, buy/hold/sell breakdown)
-- Recent significant news events (last 6 months)
-- Market sentiment indicators
+| 资产形态 | 主锚 | 禁用 |
+|---|---|---|
+| 盈利稳定重资产 | ROE 校准 PB（戈登：合理 PB = ROE / r，r≈9%） | — |
+| 轻资产 | 正常化 PE + DDM + FCF 收益率三法收敛 | PB |
+| 成熟制造 + 高分红 | DDM + 正常化 PE + 股息率反推 | PB |
+| 强周期 | PB + 单位指标（头均市值等）+ 周期先行指标 | PE（峰值利润的反向指标） |
+| 再投资出海（CXO） | PE + 在手订单 + 产能爬坡；扣非占比验成色 | 股息率 / DDM |
+| 资源周期 | 商品价格位置 + PE 分位 + 单位成本 + 量增 | 绝对 PE |
+| 周期新材料 | 历史峰值盈利锚 + 三情景概率加权 | 一致预期远期 PE |
+| 小盘成长 | PE + PS + 流动性折价 + 预测分歧度 | 单一盈利预测 |
+| 薄利制造 / 出口链 | 终局 PE 折现 + 同业 PB/ROE 比值 + 净利率敏感性 | 同比增速、单一 PEG |
+| 专业市场 / 园区运营 | 分部估值 + DDM + OCF 转正验证 | 并表 PE |
+| 亏损期制造 / 军工电子 | PB 双视角 + 同业横向 + 订单节奏先行指标 | PE、一致预期远期 PE |
+| 银行 | PB ÷ ROE 匹配度 + 股息率 + 资产质量 | 单看 PB、PE |
+| 寿险 | P/EV 主锚 + EV 驱动拆解 + 假设敏感性 | PE |
+| 未盈利创新药 | 管线 rNPV + 每股净现金 + 现金跑道 + 关键读出 | PE / PB / PS |
+| IP / 潮玩 | IP 瀑布拆解 + 存货周转 + 二手价 + 跨周期同业 PB 锚 | TTM PE、新 IP 同比 |
 
-**Management & Governance (qualitative — do NOT skip):**
-- **Management track record**: Has leadership historically delivered on guidance and promises? Look for consistency between past forecasts and actual results
-- **Compensation alignment**: Are executive compensation structures tied to shareholder value (EPS, stock price, ROE)? Or are they fixed/entitlement-based?
-- **Insider trading signals**: Any recent insider purchases (bullish signal) or large insider sales (caution signal)? Major shareholder pledging of shares?
-- **Corporate governance**: Board independence, related-party transactions (especially large ones), auditor opinions (qualified/unqualified), any regulatory violations in the past 3 years
-- **Capital allocation track record**: How does management deploy capital — dividends, buybacks, M&A, or capex? Is their M&A history value-accretive or value-destroying?
+表外形态：先回答「它的价值由什么现金流决定」，再选锚。
+「强周期 / 资源周期 / 周期新材料」三类不是拿到 PB 就能用 —— 须先做周期定位（走周期专章）。
 
-**Valuation:**
-- Current PE (TTM), forward PE estimates, PB, dividend yield
-- Historical PE range for context
-- Consensus earnings estimates
-- **PEG ratio** (PE-to-growth) — compare against the 3-year net profit CAGR; PEG < 1 generally indicates undervaluation for growth stocks
-- **EV/EBITDA** — useful for cross-company comparison as it removes capital structure differences; especially relevant for capital-intensive or highly leveraged companies
-- **PE historical percentile** — current PE's rank within the 5-year range (e.g., "15th percentile" means cheaper than 85% of the time)
-- **FCF Yield** (Free Cash Flow / Market Cap) — measures the cash return relative to market value; useful for comparing against bond yields
+**周期股专章（做周期标的必读，`references/methodology.md` §04）**
+- 先分**周期型 vs 结构型**，判据只有一个：**价差回落时，利润还在不在**。周期型（价差驱动、单季跳升）走周期框架；结构型（连续 ≥3 年单向抬升）走第 9 步前奏门槛。同一标的可同时是两者。
+- **定位五要素（缺一不可）**：价格位置（商品价十年分位）／供给端（在建工程÷固定资产、产能投放表、开工率）／需求端／库存天数及分位／成本曲线位置。**供给不配合，价格反弹一律按假复苏处理。**
+- **四阶段 → 四把尺子**：底部（PB 分位 + 单位产能指标 + 重置成本，禁 PE）→ 复苏（正常化盈利 PE，**唯一可用 PE 的阶段**，禁用当期年化 PE）→ 顶部（上轮周期顶倍数 × 峰值盈利再折现，禁用低 PE 选股）→ 下行（现金成本覆盖 + 分红/OCF 支撑 + PB 底，禁用一致预期远期 PE）。
+- **铁律**：① 周期股「PE 低」是卖出信号，不是买入信号，须先验分母能不能持续；② 峰值盈利越确定，应给倍数越低。
+- **横向比较**用单位产能指标（头均市值 / 吨产能市值 / 桶油市值 / 单箱运力市值），绝对市值与绝对 PE 不可比。
+- **退出：卖在景气，不在季报** —— 估值到位、供给重启、商品价 80% 分位以上、单位盈利连续两季转弱。禁用季报利润判断拐点（季报是滞后确认）。
+- 「剔除周期行业」只作用于第 9 步前奏扫描，不等于「周期股不可买」。
 
-**Macro Environment (critical — do NOT skip):**
-- Global monetary policy: Fed funds rate, CPI/inflation trends, ECB/BOJ rate direction, whether rate cuts are expected or reversed. Determine if global liquidity is tightening or loosening.
-- Geopolitics: US-China relations status (cooperation vs confrontation), trade tariff levels, Taiwan Strait risk, Middle East, Russia-Ukraine. Assess whether tensions are escalating or de-escalating.
-- AI/tech bubble risk: Are AI/semiconductor stocks in bubble territory? Any recent crashes (e.g., Nvidia single-day drops)? Assess probability of structural vs systemic bubble burst.
-- A-share market valuation context: Overall PE percentile (e.g., "85th percentile of 10-year range"), whether the market is structurally frothy or broadly cheap, sector rotation dynamics (growth vs value vs dividend).
-- China domestic economy: Consumption recovery status, PMI trends, real estate sector health, export growth, RMB exchange rate trajectory, fiscal/monetary policy stance.
-- Industry-specific macro factors: How do the above macro forces specifically transmit to this company's industry? (e.g., "advertising is a macro barometer — consumer weakness directly cuts ad budgets", "auto parts depend on vehicle sales cycle", "export-driven companies are directly exposed to tariff changes").
-- Macro sensitivity assessment: Rate the company's sensitivity (high/medium/low) to each major macro risk factor, with a one-sentence explanation of the transmission path.
+### Phase 2: 第 1–7 步 · 七维尽调
 
-### Phase 2: Build the HTML Report
+用 WebSearch / 数据接口（见 `references/data_pipeline.md`）并行取数。每一步的「禁用」都是判定规则，不是提醒。
 
-Copy the template from `assets/report_template.html` to the workspace, then customize it with the researched data. The template provides:
+**第 1 步 · 价格位置（用分位，不用跌幅）**
+- 用**前复权收盘价**自算近两年 / 近五年区间分位；记录横盘时长
+- 标出关键高低点的**时间与成因**，区分「业绩顶」与「主题泡沫顶」（主题顶靠筹码出清，业绩顶靠利润回升）
+- ✘ 禁用：把「跌了一半」当买入理由；「板块内最便宜」—— 相对便宜是陷阱
 
-- A complete CSS framework with all component classes pre-defined
-- Placeholder `<div>` structure for all 9 sections
-- Chart.js integration with all canvas IDs pre-configured
-- Tab navigation system with `showSection()` function
+**第 2 步 · 盈利趋势（看单季环比，不看同比）**
+- 年度 + 单季四条线同看：营收 / 归母 / 扣非 / 毛利率。高增长标的必做「半年环比 + 单季环比」双重拆解
+- 核心判据：**连续两季营收同比与扣非同向恶化 ⇒ 未磨底**；季节性证伪必须用同一年度 Q2→Q3 环比，不能跨年比
+- **毛利率抬升型必做结构改善净贡献（G2b）**：净贡献 = 毛利率同比 − 销售费用率同比 − 管理费用率同比，须四项同时满足：① > 0；② 营收同比不为负；③ 中高档/高端产品销量增速 ≥ 30%；④ 绝对毛利额同比为正
+- 高基数的下一季是增速陷阱：先剔一次性收入，再问「主营增速还剩多少」
 
-The 9 sections are:
+**第 3 步 · 盈利质量（剔干净还剩多少）**
+- 扣非/归母比；一次性收入单独剔出，问「剔掉后主营增速还剩多少」
+- 经营性现金流由正转负 = **质量硬伤**，必须与季节性拆开看
+- **利润成色好 ≠ 经营未恶化**：扣非占比高 + 扣非增速低同时成立时，「成色好」恰说明经营性利润本身停滞
+- **研发刚性陷阱**：研发投入 ≈ 毛利额时，即使订单恢复，利润弹性也被显著削弱
+- 净利率 < 8% 的薄利公司，必做毛利率敏感性 + 汇兑敞口（毛利率降 1pct → 利润降约 14%）
+- 政策主题要问落在哪个板块、毛利多少 —— **政策给收入不给利润率**
 
-1. **公司概况 (Company Overview)** — Business model, competitive moat assessment (scored 0-100), industry position with market share chart, revenue structure by client industry, **Porter's Five Forces & industry chain analysis card** (rate each force with one-line justification), **management & governance assessment card** (track record, compensation alignment, insider trading, capital allocation)
-2. **财务数据 (Financial Data)** — Key metrics cards (revenue, net profit, operating cash flow, gross margin, net margin, ROE, EPS), trend charts (revenue & profit 2019-2025 bar+line combo, margin trend, cash flow comparison), **DuPont decomposition chart** (ROE split into net margin × asset turnover × leverage, 3-year trend), **asset quality panel** (goodwill ratio, AR turnover, inventory turnover), **growth analysis card** (CAGR, organic vs M&A growth), profit anomaly explanation section
-3. **技术分析 (Technical Analysis)** — Price metrics cards (current price, 52-week high/low, capital flow), price trend chart with support/resistance annotation, support/resistance grid, technical indicator summary (MA5/MA20/MA60, RSI, MACD, Bollinger Bands, volume)
-4. **市场情绪 (Market Sentiment)** — Analyst rating badge and coverage stats, target price range with progress bars, sentiment doughnut chart, recent news timeline with sentiment tags
-5. **竞品对比 (Competitor Comparison)** — Market share before/after key events (stacked bar), revenue comparison bar chart, detailed financial metrics comparison table, strategic summary (threat analysis + synergy opportunities)
-6. **估值与健康 (Valuation & Health)** — Valuation metrics cards (PE TTM, forward PE, PB, dividend yield, **PEG, EV/EBITDA, PE historical percentile, FCF Yield**), PE history trend chart with mean line, valuation scenarios (pessimistic/neutral/optimistic with implied prices), financial health dashboard (liquidity, leverage, earnings quality, dividend sustainability)
-7. **宏观环境 (Macro Environment)** — Global macro overview cards (Fed rate, CPI, A-share PE percentile, geopolitical status), macro risk transmission bubble chart (probability × impact, bubble size = portfolio impact), macro-to-company transmission path analysis (how each macro force flows through to this specific company), macro sensitivity rating table (high/medium/low per risk factor with one-line reasoning), key macro signals to monitor with trigger actions. Structure macro analysis using **PEST framework**: Political/Policy, Economic, Social, Technological — each dimension gets at least one specific factor with transmission path to the company.
-8. **主要风险 (Risk Analysis)** — Risk matrix bubble chart (probability × impact), detailed risk cards with severity badges (high/medium/low), **stress test table** (2-3 scenarios with quantified impact: e.g., "gross margin -5pct → net profit -X% → PE re-rating to Yx → implied price Z"). Risks here are company-specific; macro risks belong in section 7.
-9. **结论建议 (Conclusion & Recommendations)** — Three-horizon investment recommendation cards (short/medium/long term), bull case logic, bear case logic, key monitoring indicators, **composite scoring matrix** with explicit grade definitions (see scoring rubric below). Recommendations must incorporate the macro outlook from section 7 — e.g., if macro sensitivity is high, the short-term recommendation should reflect added caution.
+**第 4 步 · 资产负债表（尤其看亏损公司）**
+- 有息负债变化、现金短债比、OCF 是否连续为负
+- 亏损公司警惕「净资产缩水」制造**被动高估**的估值陷阱（分母自己变小）
+- 「高分红 + 借款增 + 存货增 + 经营现金流为负」四并存需警惕 —— 但命中 2/4 不构成高危，须逐项核对
 
-**Critical data-filling rules:**
-- Color coding follows Chinese market convention: price UP = red (#e94560), price DOWN = green (#00c853)
-- All monetary values use 亿 as the unit for Chinese stocks
-- The template CSS already has all needed classes; do NOT alter the CSS structure
-- Every numerical data point in the template must be replaced with actual researched data
-- Chart datasets must be updated with real numbers; do not leave placeholder data
-- The Chart.js CDN script tag must remain exactly as-is
+**第 5 步 · 行业横向（判「行业性」还是「公司自身」）**
+- 同子板块取 ≥3 家 + 跨子板块取 ≥3 家对照
+- 判决指标是**营收同比**，不是亏损绝对值。亏损收窄 / 营收转正 = 行业复苏已落地；亏损扩大且营收仍负 = 问题在自身
+- 行业复苏但公司未跟上 ⇒ β 反弹拿不到，须下调至「恢复最慢」定价
 
-### Phase 3: Portfolio Position Advice (Optional)
+**第 6 步 · 催化与事件传导（先验链条，再看利好）**
+- **宏观利好 ≠ 个股利好**。逐段验证「事件 → 行业 → 公司利润表」传导链，缺一段即证伪
+- 核心是识别**身份错配**：收租方 / 平台方 / 渠道方 ≠ 交易方，收入由合同锁定、与行业景气脱钩。最有力的反证是「行业数据创新高而公司核心利润下滑」
+- 利好必须定时滞。β 级利好不能对冲 α 级利空
+- **时序证伪**：「事件前已有正面报道、事件日仍大跌」= 利好已被定价
+- **已兑现的催化不追**（题材落地后连板、政策落地后放量均属兑现完成）
+- 催化窗口要求 **6–12 个月内可见**，更远的只可跟踪不可作买入理由
 
-If the user provides their holding details, append a position advice block after the 9 main sections. Structure it as:
+**第 7 步 · 筹码与公司行为（便宜能不能兑现）**
+- **筹码四件套同看**：主动基金家数、股东户数、北向持股、ETF 是否退出十大流通股东
+- ⚠️ 股东户数下降不能直接读作「筹码集中」：须查年报「**披露日前一个月末**」户数，识别主题期涌入的散户余量
+- 被动 ETF 增减持 = 指数编制与申赎，**不构成主动看多**
+- 产业资本减持价只证明「减持价偏贵」，不证明「现价便宜」，**不可反推买点**
+- **公司回购三查**：① 注销（真增厚每股价值）还是库存股（可再卖出，价值中性）；② 资金来源 —— 自由现金流回购 = 股东回报，借款回购 = 加杠杆托股价；③ 回购价所处估值分位 —— 高位回购是向卖方输送价值。回购与分红**不得重复计入**股东回报，分母一律用摊薄后股本
+- **利好消息密度峰值 + 股价滞涨 = 派发特征**（配合主动基金家数减少）
+- 卖方评级与买方持仓背离时，**信后者**
+- 流动性是双侧约束：自由流通 < 30 亿流动性差，> 100 亿则少量资金无法定价。须显式说明用的是哪一侧
+
+### Phase 3: 第 8 步 · 估值与赔率（把结论算成一个价）
+
+**① 分位指纹（先看病灶在哪）**
+
+| PE 分位 | PB 分位 | 读法 |
+|---|---|---|
+| 低 | 低 | 真便宜 —— 继续查基本面是否在恶化 |
+| 低 | 高 | 盈利在顶 —— PE 低是假象 |
+| 高 | 低 | 盈利与股价双底 —— 周期反转候选 |
+| 99%+ | ≈0% | 盈利崩塌 —— 教科书级陷阱 |
+
+- **双窗口必做**：同看「近两年分位」与「十年/全历史分位」，背离时**以十年为准**。只看近两年会把「PE 低 + PB 高 = 盈利在顶」误判为便宜
+- 亏损公司无 PE，只看 PB 分位；轻资产公司 PB 分位只跟自己历史比，不跨行业比
+
+**② 折现 + 概率加权（唯一合法的目标价算法）**
 
 ```
-持仓现状：cost price, current price, floating P&L%, position weight
+折现价 = 目标市值 / (1 + WACC)^n      // n 为年数，WACC 常用 12%
+期望价 = Σ(情景价 × 情景概率)          // 概率之和必须 = 100%
+```
+
+- **买入门槛：期望价 / 现价 ≥ +15%**。达不到就是「不买」，而不是「有点空间可以试试」
+- 即便完全接受卖方最乐观假设并折现，若结果 ≈ 现价 → 现价无安全边际
+- 时间折现的实战校验：卖方目标价常是「某年利润 × 某倍 PE」**未折现**，补折现（WACC 12%，3 年因子 0.712）后往往 ≈ 现价，安全边际归零
+
+**②b 当前买入胜率（必做，三情景的衍生结果）**
+
+期望价回答「平均能赚多少」，**胜率回答「这一把赢面多大」**。两者缺一不可 —— 高期望价可以完全由低概率 + 极端情景撑起，那不是胜率，是彩票。概率加权已给出所需的全部输入，必须顺手把胜率算出来。
+
+**定义：胜率 = 满足「情景价 ≥ 现价 × 1.15」的情景概率之和。** 门槛沿用 +15% 买入尺子，保持全流程一致。
+
+⚠️ **门槛是「≥ 现价 × 1.15」，不是「涨了就算赢」。** 情景相对现价上涨但涨幅不足 +15% 的，**不计入胜率**。这是最容易算错的一步 —— 若误按「正收益即算赢」统计，胜率会被系统性高估，把「不买」的结论翻转成「可买」。
+
+**三档判定：**
+
+| 胜率 | 判定 | 动作 |
+|---|---|---|
+| **≥ 50%** | 高胜率 —— 即便按最可能的中性情景也算得过来 | 达到期望价/现价门槛即可分批建仓 |
+| **30% – 50%** | 中等偏博弈 —— 需要乐观情景才能赢，靠赔率补 | 只在期望价 / 现价 ≥ +25% 时介入，且首仓减半 |
+| **< 30%** | 低胜率 —— 典型「赌重估」 | **不买**。与买入门槛判定独立，任一不过即否决 |
+
+**期望价与胜率的关系（用于校准，不是替代）：**
+
+```
+期望价 / 现价 − 1 ≥ 胜率 × 乐观收益率 − (1 − 胜率) × 悲观损失率
+```
+
+期望价高但胜率低 ⇒ 期望靠尾部情景撑起 ⇒ 提高赔率要求或直接用仓位控制。**不能说「期望价够高所以胜率不重要」。**
+
+**必写的三句话**（缺一句即视为未测算）：
+1. 三情景的价格、概率、概率之和 = 100%
+2. **胜率 = X%**（锁定门槛：情景价 ≥ 现价 × 1.15）
+3. 胜率对应的仓位建议（高 / 中 / 低三档）
+
+**与风控的接口**：胜率 < 30% 时，即便决定小仓位参与，也须按「跳空 −25%~−30%」定价仓位，使单一标的组合冲击 ≤ 1.5% —— 低胜率标的的仓位不是「多少合适」，而是「能不能承受归零」。
+
+**禁止**：用「机构一致预期偏乐观」这类定性表述代替胜率数字；三情景概率必须显式列出，不得以「一般认为」代替。
+
+**③ 赔率与风控**
+- **R/R 分子禁用「合理价值上沿」（循环论证）**，取「最近有效阻力 ÷ 止损位」。分子分母都必须是从价格图上读出的数字
+- 有效阻力识别：**筹码密集区**（前期成交额最大的价格带，最硬）> 前高/前低 > 整数关口（不得单独作阻力）。有效性判据 = 该位置附近**是否出现过放量滞涨**
+- **止损位 ≠ 保证成交价**：可跳空标的的硬止损属假性风控
+- **正解 = 以仓位为第一风控**：按跳空 −25%~−30% 定价，使单一标的组合冲击 ≤ 1.5%，用「事件前主动减仓」替代「事件后止损」
+- 同等期望回报下，永远选「**可跟踪的风险**」（连续型下行优于二元型下行）
+- A/H 溢价按部分收敛 haircut −20%~−25% 计入目标价；H 股 IPO 价是发行折价 ≠ 内在价值，递表本身即压制 A 股估值中枢
+- 终值威胁分层采纳：不进当期 EPS，但**封顶退出倍数**
+
+### Phase 4: 第 9 步 · 前奏态扫描（仅「找标的」时走）
+
+首要判据：**市值倍数 ÷ 利润倍数** > 1 是赚估值的钱（叙事定价，安全边际框架不适用），< 1 才是赚利润的钱。
+
+**前奏态六道门槛（权威定义，须照抄不得简写）**
+
+| 门槛 | 定义 |
+|---|---|
+| G1 | 归母增速 ÷ 收入增速 ≥ 3x，且两者同为正 |
+| G1b | 归母增速绝对值 ≥ 15%（防分母过小） |
+| G2 | 毛利率同比 ≥ +2pct |
+| G2b | 毛利率同比 − 销售费用率同比 − 管理费用率同比 > 0，且营收同比不为负，且中高档/高端产品销量增速 ≥ 30%，且绝对毛利额同比为正 |
+| G3 | PE、PB 历史分位双 < 30%（近两年窗口判定 + 全历史窗口校验背离） |
+| G4 | 自由流通 ≤ 100 亿 |
+| 附加 | 上年同期归母 ≥ 1.2 亿、扣非/归母 ≥ 70%、市值 ≥ 30 亿、剔除周期行业 |
+
+- 真假反差判别：**真 = 结构改善**（连续三年单向抬升）；**假 = 周期修复**（价差/加工差驱动，单季跳升）。利润增幅榜前几名往往是假的
+- 4 条结构性共性：① 起点被行业叙事判过死刑；② 出现单位盈利能力更高的新市场；③ 报表反差；④ 筹码空白
+- 两条最容易犯的错：① 股价滞后基本面 6–12 个月，启动前常有一次最后下跌；② 能搜到的一律已进入定价 ⇒ **必须框架驱动扫描，不能新闻驱动**
+
+### Phase 5: 第 10 步 · 验证与退出（闭环）
+
+**① 验证点：指标 + 阈值 + 时间窗，三要素缺一不可。** 要写成「可判真假的一句话」，不写「关注三季度业绩」。
+
+**② 退出判据：四类触发，事先写死**
+
+| 类型 | 触发条件 |
+|---|---|
+| 估值到位 | 触及概率加权目标价上沿 → 分批减 1/3 ~ 1/2 |
+| 逻辑破坏 | 支撑买入的核心变量被证伪 → 不问盈亏直接退出 |
+| 价格破位 | 跌破事先定义的关键低点 → 加速减 / 清仓 |
+| 时间止损 | 约定窗口内未兑现催化 → 重新评估占用成本 |
+
+**③ 减仓时机优先于止损价位**：事件前主动减仓 > 事件后止损。可跳空事件（反垄断、商誉减值、H 股发行、解禁、业绩说明会、转债到期、质押）执行「事件前减 1/3–1/2」。**时间炸弹要列成清单并前置**，这些是可提前排期的减仓时点，不是新闻。
+
+**④ 成本锚定效应（实战中最烧钱的一条）**：正确表述是「折现期望价 X < 成本 Y → 数学上不支持死等回本」，同时「期望价对现价仅 +Z%，低于 +15% 买入尺子 → 不构成加仓」。两个结论各自独立，都由现价与期望价得出，与成本无关。
+
+### Phase 6: 专项口径（命中行业时必读）
+
+- **创新药**：单品高增长必拆「销量 × 价格」，价格跌幅 > 70% 即为以价换量；集采风险三触发（同靶点获批 ≥ 8 款 / 入基药目录 / 该代际渗透率 > 85%）；rNPV 参数：已获批 100% × 70% 商业化折扣、NDA 75%（补资料 ×80%）、III 期 60%、I 期 10%、稳态净利率 20%、成熟 PE 22x、WACC 12%
+- **银行**：核心指标 PB/ROE 比值（农商行中位锚 0.0517）；**破净 ≠ 便宜**，必看 PB 历史分位；PE 分位 99.9% + PB 分位 0% = 盈利崩塌
+- **农产品**：分三层（全球 vs 中国常反向 / 分品种 / 当期 vs 滞后）；厄尔尼诺年大豆单产可能 +5%（反直觉）；库存使用比阈值美玉米 11%；生猪能繁存栏须用 PSY 折算实际供给
+
+### Phase 7: 构建 HTML 报告
+
+复制 `assets/report_template.html`，用调研到的数据替换全部占位内容。模板提供完整 CSS 框架、11 个 section 的 `<div>` 结构、Chart.js canvas 与 `showSection()` 导航。
+
+**十一大章节**（与模板 11 个 tab 一一对应，顺序不得调换）：
+
+1. **公司概况** — 业务模式与护城河评分、**估值锚定位卡（形态 / 主锚 / 禁用尺子）**、行业地位与市占率图、营收结构
+2. **财务数据** — 指标卡（营收、归母、扣非、OCF、毛利率、净利率、ROE、EPS）、趋势图（营收利润 2019-2025 柱线组合、利润率趋势、现金流对比）、**四条线单季环比拆解表**、利润异动说明
+3. **技术分析** — 价格指标卡、价格走势图（标注支撑/阻力）、**有效阻力识别卡（筹码密集区 / 前高 / 放量滞涨验证）**、支撑阻力网格、技术指标汇总（MA5/20/60、RSI、MACD、布林带、量能）
+4. **市场情绪** — 分析师评级与覆盖数、目标价区间进度条、情绪环图、**资金进出趋势（近 20 日总资金/主力日度柱 + 分区间净额汇总表 + 近 12 周主力净流入）**、近期新闻时间轴（含情绪标签）、**信息密度与股价滞涨的派发判别**
+5. **竞品对比** — 市占率对比、营收对比图、**同业营收同比对照表（判行业性 vs 自身）**、战略总结
+6. **估值与健康** — 估值指标卡（PE TTM、前瞻 PE、PB、股息率）、**PE/PB 双窗口分位表（近两年 vs 全历史）**、**估值分位四象限图**、**三情景概率加权卡（悲观/中性/乐观 + 概率 + 期望价 + 买入门槛）**、**当前买入胜率与胜率×赔率定位图**、财务健康仪表盘
+7. **宏观环境** — 宏观概览卡、宏观风险传导气泡图（概率 × 影响）、**宏观传导矩阵（变量 / 通道 / 受损 / 受益 / 时滞）**、**传导链到利润表的落点（财务费用率、汇兑损益占比、出口收入占比）**、**身份错配审查**、大势仓位判断
+8. **主要风险** — 风险矩阵气泡图、风险明细卡（含严重度标签）。**公司层面风险放这里，宏观/系统性风险放第 7 节**
+9. **验证与退出** — 验证点清单表（指标 + 阈值 + 时间窗）、退出判据四类、时间炸弹/事件前减仓排期、成本锚定正误对照
+10. **结论建议** — 三时间维度建议卡（短/中/长）、**当前买入胜率结论卡（胜率数字 + 三档判定 + 对应仓位）**、看多逻辑、看空逻辑、综合评分矩阵
+11. **自检清单** — 38 项逐项勾选状态 + 红线与陷阱速查
+
+**结构硬约束**：11 个 `<div class="section">` 必须是 `<div class="content">` 的**直接子元素且彼此平级**。错位会让整节空白或泄漏到其他 tab —— 改完模板后必须按 Phase 9 第 16 项做浏览器实测。
+
+**数据填写硬规则**：
+- 颜色遵循 A 股惯例：**涨 = 红 (#e94560)，跌 = 绿 (#00c853)**
+- 金额单位统一用「亿」（A 股）
+- 模板 CSS 已含所需类，**不要改动 CSS 结构**
+- 模板中每个数字都必须替换为真实调研数据，图表数据集不得留占位值
+- Chart.js CDN script 标签保持原样
+- **关键数字必须标注来源 + 时点 + 口径**；概率与假设必须显式列出，不得以「一般认为」代替
+- 如方法论要求产出「单文件 HTML 且禁用外部 script」，改用内联 SVG 图表替代 Chart.js CDN
+
+### Phase 8: 组合层面（用户提到组合 / 多标的时）
+
+- **砍相关性，不砍数量**。每个风险篮子只留最强那只。判据：会不会因同一条消息一起跌
+- 风险贡献 = 权重 × 最坏跌幅，不是权重本身。风险性质决定仓位（收获 / 成长兑现 / 周期博弈 / 困境反转 / 价值陷阱，五类给不同上限）
+- **压力测试分母用总资产，不用股票仓位**（用股票仓位会系统性高估承受力）
+- 组合风险由前三大仓位主导；对比不同数量方案时**必须拉到同等股票仓位**再比
+
+### Phase 9: 质量检查与交付
+
+**先跑 Phase 9.5 的回查脚本拿到机器验的结论，再逐项核对下表**（详表见 `references/redlines.md` 的 38 项自检）：
+1. 已按形态归类，**未使用任何禁用估值尺子**
+2. 跨年口径可比（会计政策切换、A/H、集团 vs 上市公司）
+3. Chart.js 数据集与正文分析一致，数字内部自洽
+4. 公司名、代码、报告日期出现在头部
+5. 11 个 section 全部填充真实数据，无占位符
+6. 第 7 节（宏观环境）的宏观数据与传导链是当前真实数据，且传导路径具体到本公司
+7. 第 10 节（结论建议）与宏观/周期判断不矛盾
+8. 目标价已折现 + 概率加权，情景概率之和 = 100%
+9. 期望价 ÷ 现价 ≥ +15% 已明确判定；未达标已写「不买」而非「可以试试」
+10. **当前买入胜率已测算**（胜率数字 + 门槛 + 三档判定 + 对应仓位），未用定性表述代替
+11. 验证点三要素齐全，退出判据四类已写死，未把成本价当锚
+12. **情景数字四处在同一组**（期望价盒 / 胜率卡 / 胜率表 / 散点图），且胜率按现价 × 1.15 重算过
+13. **同一指标全篇只有一个值** —— 逐个搜：赔率 / R/R、扣非净利润、减值金额、阻力位、日期。替换数值时先穷举所有排版变体（`2.6 : 1` 与 `2.6:1` 是两种写法），再一次性改完
+14. **标题声称的数量 = 正文实际条目数** —— 如⑪自检清单标题写「38 项」，就实际数一遍 `<li>`；`redlines.md` 的「43 条红线 / 26 个陷阱 / 38 项自检」三个数字同理
+15. 页脚免责声明：「本报告仅供参考，不构成投资建议。股市有风险，投资需谨慎。」
+16. **HTML 结构完整性已实测**（改模板后必做，见下）
+
+#### 第 16 项：HTML 结构完整性实测（不可跳过）
+
+改过模板后**必须跑浏览器实测**，只数 `<div>` 总数会漏判 —— 一多一少会互相抵消成平衡，但结构已经错了。
+
+```javascript
+// ① 所有 .section 必须是 DIV.content 的直接子元素，且彼此平级
+document.querySelectorAll('.section').forEach(s =>
+  console.log(s.id, '<-', s.parentElement.tagName + '.' + s.parentElement.className));
+
+// ② 逐个点击，量真实渲染高度（比「是否可见」更严格）
+document.querySelectorAll('.nav-btn').forEach(b => {
+  b.click();
+  const s = [...document.querySelectorAll('.section')].find(x => getComputedStyle(x).display !== 'none');
+  console.log(b.textContent, 'h=' + s.offsetHeight, 'textLen=' + s.innerText.length);
+});
+```
+
+**判废信号**：任一 section `h=0`（内容存在但零高度 = 被嵌进了隐藏的兄弟节点）；或 `textLen` 明显偏大（吞了别的 section 的文本）。
+
+**真实事故**：③ 结尾一个多余的 `</div>` 关掉了 `.content`，导致 ⑦–⑪ 五个 section 被嵌进 `#valuation` 内部，用户看到「⑦ 到 ⑪ 没有任何数据」。当时 div 总数显示 607/607 平衡，**检查全绿但页面是坏的**。详见 `references/color_conventions.md` §5。
+
+用 `present_files` 交付 HTML 报告。
+
+### Phase 9.5: 报告内容回查（交付前必跑，也可用于回查既有报告）
+
+Phase 9 的 16 项是「写的时候自己盯」；Phase 9.5 是「写完/拿到报告后，用另一套眼睛再抓一遍」。两者不可互相替代 —— 实践反复证明，**作者视角的检查全绿，读者视角仍能一眼看出矛盾**。
+
+**触发场景**：① 每次生成报告后、`present_files` 之前；② 用户要求「查看/回查某份报告是否还有要补充的」。
+
+#### 第一遍 · 机器可验（跑脚本，别手数）
+
+```bash
+python <skill>/assets/verify_report.py "<报告.html>" --skill-dir <skill>
+```
+
+脚本自动核：标签配平（div/ul/li/table/tr）、section 数 = 11、canvas 与 `new Chart` 配对且 ID 全被引用、**版本号统一**、**自检清单标题数 = 实际 `<li>` 数**、**红线/陷阱计数 = redlines.md 基准**、**买入门槛 = 现价 × 1.15**、**情景概率和 = 100%**、**加权期望价 = Σ(折现价 × 概率)**、期望价/现价判定、赔率写法唯一、残留占位符、来源口径标注、外部 CDN 依赖。
+
+退出码 0 = 无 FAIL。FAIL 必须逐项修到 0 再交付。
+
+> 脚本只验「算得对不对、数得对不对」。**选哪个锚、逻辑自洽与否，脚本验不了**，必须走进第二遍。
+
+#### 第二遍 · 人工读（脚本验不了的 8 条，逐条确认）
+
+1. **数字自相矛盾** —— 同一事实在正文 / 括注 / 图内标注 / JS 数据集四处是否一致。**真实事故**：某报告写「W29 单周净流出 9.29 亿元」，同段括注与图上标注却是「−6.45 亿元」，JS 数据实为 −6.4475 亿元 —— 9.29 是上一版残留。脚本抓不到正文散文里的旧数字，只能靠读。
+2. **图表数据源与卡片口径冲突** —— 价格卡写「52 周高点 26.56 / 低点 9.26」（盘中价），价格图序列最高 24.14 / 最低 9.68（收盘价）。两者本可不矛盾，但**必须在报告里写明口径差异**，否则读者以为数据错了。任一「卡片写一个数、图里画另一个数」都要么统一、要么加口径注脚。
+3. **同一实体多处样本不一致** —— 竞品页「PB 图 9 家、营收图 4 家、财务表 4 家、概况表 6 家」。样本差异可以是刻意的，但**必须加一段「样本口径说明」讲清为什么不同**，否则读者判定为数据打架。
+4. **估值锚「禁用尺子」是否穷举** —— 亏损期不只用禁 PE，还要显式禁 DCF（无正现金流可折）、PS（收入含低毛利业务时与价值脱钩）。漏列 = 硬约束不完整。
+5. **折现说明是否算对** —— 正文若写「若改用 N 年折现，期望价降至 X 元」，**必须手算验一遍**。真实事故：写「3 年折现 → 6.86 元」，实际应为 7.13 元（10.02 ÷ 1.12³）。
+6. **折现价盒表述是否会引起误读** —— 「情景价 7.61 元 × 概率 28%（已折现 1.5 年）= 1.80 元」易被读成「先乘概率再折现」。正确写法：「**折现价 6.42 元 × 概率 28%**」，且六个数（三折现价 + 三概率）与上方进度条、下方胜率表同源。
+7. **散文里提到的待办/进度是否与正文一致** —— 如「本章共 N 张图」「以下三项」这类计数句，逐个数一遍。
+8. **自检清单的勾选状态是否与结论自洽** —— 结论「不买」时，相关项应是 `no` 而非 `ok`；只打勾不判否 = 清单走过场。
+
+#### 回查记录写入工作日志
+
+每轮回查把「发现 → 修复」逐条记进当日 memory 日志（含错误原值、正确值、根因）。这些是 skill 与文档下一轮迭代的输入 —— 踩坑 1、2、6 都源于此。
+
+### Phase 10: 可选 · 仓位建议
+
+用户提供持仓时追加。结构：
+
+```
+持仓现状：成本价、现价、浮动盈亏%、仓位占比、成本对应 PE vs 市场 PE
 操作建议：
-- 短期（1-3个月）：action + reasoning
-- 中期（1-3个月）：conditional actions with catalysts
-- 长期（半年+）：target price range and rationale
-止损参考：specific price levels and conditions
+- 短期（1-3 个月）：动作 + 理由
+- 中期（3-12 个月）：条件动作 + 催化
+- 长期（半年+）：目标价区间与依据
+退出排期：事件前减仓时点（解禁 / 转债 / 说明会 / 质押）
 ```
 
-Provide specific, actionable advice with concrete price levels, not vague recommendations.
+必须给具体价格，不给模糊建议。且**不得以「回本」为决策依据**。
 
-### Phase 4: Quality Check & Present
-
-Before finalizing:
-1. Verify all Chart.js datasets match the text analysis — numbers must be internally consistent
-2. Confirm the company name, stock code, and report date appear in the header
-3. Ensure all 9 tab sections are populated with meaningful data (not placeholders)
-4. Verify that the macro section (section 7) contains real, current macro data — not generic boilerplate. The macro risk transmission paths must be specific to this company.
-5. Confirm that the conclusion section (section 9) incorporates the macro outlook — recommendations should not contradict the macro sensitivity assessment.
-6. Add a disclaimer footer: "本报告仅供参考，不构成投资建议。股市有风险，投资需谨慎。"
-
-Then use `present_files` to deliver the HTML report.
+---
 
 ## Resources
 
 ### assets/report_template.html
-A production-grade, fully-styled HTML template with:
-- Complete CSS (dark header, card system, metric cards, tags, progress bars, tables, risk items, etc.)
-- Full `<div>` structure for all 8 sections with proper IDs and grid layouts
-- Chart.js integration with Canvas elements and pre-written `commonOpts` configuration
-- Tab navigation JavaScript (`showSection` function)
-- Responsive design breakpoints
+生产级全样式 HTML 模板：完整 CSS（深色头部、卡片、指标卡、标签、进度条、表格、风险项）、11 个 section 的完整 `<div>` 结构、Chart.js canvas 与 `commonOpts` 预置、`showSection()` 导航、响应式断点。复制后替换全部硬编码数据。
 
-Copy this template and replace all hardcoded data with the researched data. The template is a starting point, not the final output.
+### assets/verify_report.py
+报告内容回查脚本（Phase 9.5 第一遍）。`python verify_report.py <报告.html> --skill-dir <skill>`。自动核：标签配平、section 数、canvas/Chart 配对、版本号统一、自检计数、红线/陷阱基准、买入门槛 = 现价 × 1.15、情景概率和、加权期望价、赔率写法、占位符、外部依赖。退出码 0 = 无 FAIL。基准计数（43/26/38）从 `redlines.md` 自动读取，改条目后无需改脚本。
+
+### references/methodology.md
+方法论全文结构速查：10 步流水线详解、周期股专章（定位五要素 + 四阶段尺子）、环境与传导（大势 + 宏观传导矩阵 + 公司回购三查）、七维尽调明细、估值与赔率（分位指纹 + 折现加权 + 有效阻力）、技术面时序、前奏态六道门槛、验证与退出、三行业专项口径、组合与选股流程。
+
+### references/redlines.md
+43 条红线速查（按事件传导/估值筛选/周期位置/环境技术/盈利质量/筹码交易/跨境口径/前奏识别/持仓纪律分组）、26 个陷阱对照表、出清单前 38 项自检清单。
+
+### references/data_pipeline.md
+实测可用的数据管线：腾讯行情 `qt.gtimg.cn` 字段表、历史 K 线接口、东财公告与数据中心接口、编码规矩、数据源可用性与已知畸变（neodata 小数点畸变与假 PE、westock 不可用）、「今天为什么跌」三步走诊断流程。
 
 ### references/color_conventions.md
-Documents the color coding conventions for Chinese stock market analysis, including:
-- Chinese market color rules (红涨绿跌)
-- CSS class mappings for up/down/neutral values
-- Tag color semantics
-- Chart color palette reference
-- Risk severity color mapping
+A 股配色规范：红涨绿跌规则、CSS 类映射、标签色语义、图表调色板。
+
+---
 
 ## Important Notes
 
-- **Always run multiple WebSearch calls in parallel** during Phase 1 to minimize turnaround time. Macro searches should be grouped into one batch alongside financial/market searches.
-- **Macro analysis is mandatory, not optional.** A stock analysis that only covers company-level fundamentals without addressing the macro environment is incomplete. The macro section must answer: "What happens to this stock if X happens globally?"
-- **Macro-to-company transmission must be specific.** Do not write generic "macro headwinds exist" statements. Instead, trace the exact path: e.g., "Fed high rates → global liquidity tightening → foreign capital outflows from A-shares → valuation compression for consumer stocks like this one." Each transmission path should be one sentence with a clear cause-effect chain.
-- **Structure macro analysis using PEST framework**: Political/Policy (regulation, trade policy, industry support/restriction), Economic (GDP, rates, inflation, exchange rate), Social (demographics, consumption trends), Technological (disruption risk, tech advantage). Each dimension needs at least one specific factor with a clear transmission path to the company.
-- **Distinguish one-time from recurring effects** — in the financial section, always explain whether profit changes are driven by core operations or non-recurring items (asset impairments, investment gains, etc.)
-- **DuPont decomposition is mandatory** — always decompose ROE into net margin × asset turnover × equity multiplier for at least 3 years. This reveals whether ROE changes are driven by profitability, operational efficiency, or financial leverage — critically different signals for investors.
-- **Asset quality must be checked** — report goodwill as % of net assets, accounts receivable turnover, and inventory turnover. High goodwill ratios or deteriorating receivables are early warning signals for impairment risks and earnings manipulation.
-- **Growth analysis must separate organic from M&A-driven growth** — revenue CAGR alone is insufficient. If a company's growth is primarily acquisition-driven, the sustainability of that growth is fundamentally different from organic growth.
-- **Use multiple valuation methods for cross-validation** — do not rely solely on PE. Always calculate PEG (especially for growth stocks), EV/EBITDA (for cross-capital-structure comparison), and FCF Yield. When the company has had recent one-time profit hits, use forward estimates rather than trailing data for valuation context.
-- **Stress test is mandatory in the risk section** — provide at least 2-3 quantified scenarios (e.g., "gross margin -5pct", "key customer loss", "regulatory fine 10% of revenue") with the calculated impact on net profit, PE re-rating, and implied stock price. This transforms vague risk descriptions into concrete downside estimates.
-- **Use the same year labels consistently** across all charts to avoid confusing the reader
-- **Be conservative with valuation** — when the company has had recent one-time profit hits, use forward estimates rather than trailing data for valuation context
-- **Risk analysis should be specific to the company**, not generic boilerplate. Each risk must explain why it matters to this particular business. Company-specific risks go in section 8; macro/systemic risks go in section 7.
-
-## Scoring Rubric
-
-The composite scoring matrix in section 9 must use the following standardized grade definitions:
-
-| Dimension | A (Excellent) | B (Good) | C (Average) | D (Poor) |
-|-----------|---------------|----------|-------------|----------|
-| **Moat Quality** | Unassailable competitive position, multiple durable moats (network, scale, brand, switching cost) | Strong position with 1-2 durable moats, defendable | Moderate moat, eroding under pressure | No sustainable advantage, commoditizing |
-| **Financial Health** | High cash generation (OCF > 2x NI), low debt, high ROIC, clean balance sheet | Profitable, adequate cash flow, manageable debt | Marginal profitability, cash flow concerns, rising debt | Loss-making, negative FCF, distressed balance sheet |
-| **Growth Certainty** | High visibility 3yr+ growth (>15% CAGR), diversified drivers, secular tailwinds | Moderate growth (8-15% CAGR), some visibility | Low growth (0-8%), uncertain outlook | Declining revenue/profit, structural headwinds |
-| **Valuation Attractiveness** | Significant discount to intrinsic value (>30% margin of safety), low PE percentile | Reasonably priced (10-30% margin of safety) | Fairly valued (<10% margin of safety) | Overvalued, trading at premium with no growth support |
-
-## Data Source Guidance
-
-When gathering data via WebSearch, prioritize these sources for reliability:
-
-**A-shares (A股):**
-1. Company annual reports / quarterly reports (巨潮资讯网 cninfo.com.cn, 上海证券交易所 sse.com.cn, 深圳证券交易所 szse.cn)
-2. Wind / 同花顺 / 东方财富 (for financial data and peer comparison)
-3. 中国证券投资者保护网 (for investor sentiment)
-
-**US Stocks:**
-1. SEC EDGAR filings (10-K, 10-Q, 8-K) — most authoritative
-2. Company investor relations pages (for guidance and conference call transcripts)
-3. Yahoo Finance / Seeking Alpha (for consensus estimates and analyst coverage)
-
-**General:**
-- Always prefer primary sources (filings, official announcements) over secondary sources (news articles, sell-side reports)
-- For Chinese stocks, cross-reference between 巨潮 and 东方财富 for data accuracy
-- For industry data, consult industry association reports (e.g., 国家统计局, 艾瑞咨询, IDC, Gartner)
+- **Phase 0 不能跳。** 口径确认是后面所有比率的可比性前提
+- **第 0 步不能跳。** 用错尺子的分析，写得再漂亮也是废纸
+- **并行取数**：Phase 2 的多次 WebSearch / 接口调用并行发起，缩短周转
+- **周期标的有特殊路径**：第 0 步之后先走周期专章，不做定位就定不了锚
+- **技术面只有两个合法用途**：确定买点区域、确定止损位与 R/R 分子
+- **区分一次性与经常性**：财务章节必须说明利润变化是核心经营驱动还是一次性项目
+- **估值偏保守**：近期有一次利润冲击时，用前瞻估计而非 TTM 数据
+- **风险要具体到公司**：每条风险说明为什么对这门生意重要，不用通用模板
+- **剔除理由禁用「超目标价 / 已分析过」**，须用估值分位或商业模式重述。候选池必须独立于覆盖进度
+- **初筛结论必须显式声明「深度不足」**，不得与深度覆盖结论并列，不得作为加仓依据
+- **无验证点不出结论；验证点未通过不加仓**
+- **交付前必跑 Phase 9.5 回查**（脚本 + 人工 8 条）。作者视角检查全绿 ≠ 报告无矛盾

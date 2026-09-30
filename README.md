@@ -23,12 +23,25 @@ YouTube 视频下载工具，基于 yt-dlp。
 
 ### 📊 stock-analyzer
 
-股票投资全面分析工具，生成交互式 HTML 报告。
+股票投资全面分析工具，以 A 股通用方法论 v2.3 的 10 步流水线为骨架，生成交互式 HTML 报告。
 
-- **功能**：对任意上市公司生成 9 大维度的深度分析报告（公司概览、财务、技术面、市场情绪、同业对比、估值与健康度、宏观环境、风险、投资建议），支持用户持仓时的个性化仓位建议
-- **触发词**：「分析XX股票」「XX公司全面分析」「stock analysis」「投资分析」等
+- **功能**：从**选对估值锚**起步（15 类形态 → 主锚 + 禁用尺子），依次完成七维尽调、估值与赔率（**折现 + 概率加权 + 当前买入胜率**）、前奏态扫描、验证与退出闭环，产出 11 个章节的深度报告；用户提供持仓时追加仓位建议
+- **触发词**：「分析XX股票」「XX公司全面分析」「XX股票怎么样」「XX值不值得买」「stock analysis」等
 - **输出**：自包含 HTML 文件（Chart.js 图表 + 分页导航 UI）
-- **依赖**：WebSearch 数据检索，无需额外安装
+- **核心文件**：
+  - `SKILL.md` — 10 步流水线 + Phase 0–10（含 **Phase 9.5 报告内容回查**）
+  - `assets/report_template.html` — 生产级 11 节报告模板
+  - `assets/verify_report.py` — **报告回查脚本**，自动核验标签配平、版本号、计数、折现/期望价/门槛算术等 19 项
+  - `references/methodology.md` — 方法论全文结构速查
+  - `references/redlines.md` — 43 条红线 / 26 个陷阱 / 38 项自检
+  - `references/data_pipeline.md` — 实测可用的数据管线接口
+  - `references/color_conventions.md` — 配色与结构约定
+- **依赖**：数据检索能力；回查脚本需 Python 3
+
+```bash
+# 报告生成后回查（交付前必跑）
+python assets/verify_report.py "<报告.html>" --skill-dir <stock-analyzer 目录>
+```
 
 ## 使用方式
 
@@ -40,8 +53,8 @@ YouTube 视频下载工具，基于 yt-dlp。
 leo-skills/
 ├── stock-analyzer/        # 股票分析技能
 │   ├── SKILL.md
-│   ├── assets/            # HTML 报告模板
-│   └── references/        # 参考资料
+│   ├── assets/            # HTML 报告模板 + 回查脚本
+│   └── references/        # 方法论 / 红线 / 数据管线 / 配色
 ├── youtube-downloader/    # YouTube 下载技能
 │   ├── SKILL.md
 │   ├── README_zh.md

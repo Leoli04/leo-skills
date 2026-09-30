@@ -1,0 +1,192 @@
+# 数据管线与工具坑（实测可用）
+
+来源：工作区方法论文档 v2.3 §16。所有条目为实测结论，直接照用，不要重新试错。
+
+---
+
+## 数据源可用性总览（截至 2026-09-30）
+
+| 需求 | 主入口 |
+|---|---|
+| 行业与定性信息 | `agentic_search` |
+| 行情与财务 | `neodata` |
+| 行业数据 | WebSearch |
+| 兜底行情 | 腾讯行情 `qt.gtimg.cn` |
+
+⚠️ **`westock` 自 2026-09-01 起全面不可用**，不要再尝试。
+
+---
+
+## ① 实时行情 · 腾讯 `qt.gtimg.cn`
+
+- 编码：**GBK**
+- 实测可批量请求 **60 只**
+
+### 字段表
+
+| 索引 | 含义 |
+|---|---|
+| `[3]` | 现价 |
+| `[32]` | 涨跌 % |
+| `[37]` | 成交额（万） |
+| `[38]` | 换手 |
+| `[44]` | 流通市值 |
+| `[45]` | 总市值 |
+| `[46]` | PB |
+| `[52]` | PE 动 |
+| `[53]` | PE 静 |
+
+### ⚠️ 两个必踩的坑
+
+1. **`[44]` / `[45]` 单位是「亿元」** —— 按「元」写阈值会把候选全部剔光
+2. **`[39]` 是另一口径 PE，勿与 `[52]` 混用**
+
+---
+
+## ② 历史 K 线 · `web.ifzq.gtimg.cn`
+
+```
+https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=sz002465,day,,,320,qfq
+```
+
+- 参数：`<代码>,<周期>,,,<条数>,<复权>`
+- 周期：`day` 日线，`week` 周线
+- 复权：`qfq` 前复权（算价格分位用前复权；**高股息标的改用市值口径**）
+- 返回行格式：`[日期, 开, 收, 高, 低, 量]`
+
+---
+
+## ③ 公告 · `np-anotice-stock.eastmoney.com`
+
+```
+https://np-anotice-stock.eastmoney.com/api/security/ann?page_size=60&ann_type=A&stock_list=<code>
+```
+
+- 仅支持 A 股
+- ⚠️ 会漏「**重大事项**」板块 → 须另扫标题关键词：`上市` / `发行` / `募集` / `递交` / `聆讯`
+
+---
+
+## ④ 全市场批量 · 东财 `datacenter-web`
+
+三个 `reportName`：
+
+| 用途 | reportName | 注意 |
+|---|---|---|
+| 业绩表 | `RPT_LICO_FN_CPD` | ⚠️ 须按 `SECURITY_TYPE=='A股'` 剔除新三板 |
+| 利润表 | `RPT_DMSK_FN_INCOME` | ⚠️ 过滤字段是 `REPORT_DATE`，**不是** `REPORTDATE` |
+| 估值史 | `RPT_VALUEANALYSIS_DET` | 逐日 `PE_TTM` / `PB_MRQ`，可自算分位 |
+
+⚠️ **`push2.eastmoney.com` 连发 40+ 次后全系拒连** → 改走腾讯行情
+
+---
+
+## ⑤ 分部收入（主营构成）· 东财 F10 `datacenter.eastmoney.com`
+
+```
+https://datacenter.eastmoney.com/securities/api/data/v1/get?
+  reportName=RPT_F10_FN_MAINOP
+  &columns=ALL
+  &filter=(SECUCODE="002465.SZ")(MAINOP_TYPE="2")
+  &pageSize=300&sortColumns=REPORT_DATE&sortTypes=-1&source=HSF10&client=PC
+```
+
+- `columns=ALL` 可用；**指定具体列名容易撞「返回字段不存在」**（如 `GROSS_PROFIT_RATIO` 是错的，正确名是 `GROSS_RPOFIT_RATIO`——东财拼写错误但必须照抄）
+- `MAINOP_TYPE`：`2` = **按产品/业务板块**（要的就是它）；`3` = 按地区；`1` = 按行业
+- 关键列：`ITEM_NAME`（板块名）、`MAIN_BUSINESS_INCOME`（收入，元）、`MBI_RATIO`（占比）、`GROSS_RPOFIT_RATIO`（毛利率）、`REPORT_NAME`（如「2026中报」）
+
+### ⚠️ 分部收入只有中报和年报
+
+A 股披露规则下，**分部数据只在 `06-30` 和 `12-31` 两个报告期出现**（Q1/Q3 无分部明细）。
+
+- 想画「近 N 期营收结构」→ 用**半年度**为最小颗粒，不要承诺「近 4 个季度」
+- **H2 板块值 = 年报 − 中报**（推导），H1 直接取中报
+- 报告图注必须写明这个口径，否则用户以为漏数据
+
+## ⑥ 资金流向 · **新浪** `MoneyFlow.ssl_qsfx_zjlrqs`（首选）
+
+```
+https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/MoneyFlow.ssl_qsfx_zjlrqs?daima=sz002465
+```
+
+- **实测返回 3910 行全历史**（2010 年至今），**无流控**，一次拿全 —— 比东财 `push2his` 稳定得多
+- `daima` 用 `sz`/`sh` 前缀小写
+
+| 字段 | 含义 | 单位 |
+|---|---|---|
+| `opendate` | 交易日 | — |
+| `trade` | 收盘价 | 元 |
+| `changeratio` | 涨跌幅 | 小数（−0.011 = −1.1%） |
+| `netamount` | **总资金净额**（主动买 − 主动卖） | 元 |
+| `r0_net` | **主力（超大单）净额** | 元 |
+| `ratioamount` | 净额占成交额比 | 小数 |
+| `turnover` | ⚠️ 换手率相关，**不是成交额**，别当成交额用 | — |
+
+**必须先过滤** `float(trade or 0) > 0`（早期存在全 0 的占位行）。
+
+### ⚠️ 东财资金流接口已不可靠
+
+`push2his.eastmoney.com/api/qt/stock/fflow/daykline/get` 前几次可用，连发数次后**整族 host（含 1./7./13./36. 子域）全部 `RemoteDisconnected`**，冷却 90 秒仍未恢复。**直接用新浪，别耗在东财上。**
+
+### 图表表达：极端值必须截断标注
+
+周度/月度聚合时，单期极端值（如业绩预告当周 −6.45 亿 vs 其余 ±1.0 亿）会把纵轴压扁、其余期不可读。
+
+**做法**：纵轴设 `min/max` 截断，极端柱用**描边虚线**区分 + 自定义 `afterDatasetsDraw` 插件在柱顶标注真实值（「↓ 实际 −6.45 亿」），并在图注写明「已做视觉截断」。
+> 硬约束：**截断可以，但真实数值必须出现在图上**，不能只留截断后的假高度。
+
+---
+
+## ⑦ 单季度总量 · 用于「单季减亏」类判据
+
+```
+reportName=RPT_F10_FINANCE_GINCOME  (累计口径，非单季)
+```
+拿到累计营收/归母后，**单季 = 本期累计 − 上期累计**（Q1 直接用一季报）。`RPT_F10_FINANCE_GINCOMEQ` 不存在，别试。
+
+---
+
+## ⑧ 编码规矩（中文 JSON 的三个坑）
+
+1. 中文 JSON 用 `DownloadData` + `UTF8.GetString`（`DownloadString` 会按 GBK 误解）
+2. GBK 接口用 `GetEncoding('GB2312')`
+3. ⚠️ **改含中文的 HTML 一律走 Python `io.open(encoding='utf-8')`**，禁用不带 `-Encoding` 的 `Get-Content -Raw` —— PS 5.1 按 GBK 误读会造成**中文不可逆损坏**
+
+---
+
+## ⑨ 交付校验
+
+- **单文件 HTML 禁用外部 `<script>`**；图表用**内联 SVG**
+- 诊断用 headless Chrome `--dump-dom` 数 `<canvas>` / 关键节点 —— **有网与断网各跑一次**
+
+---
+
+## ⑩ 「今天为什么跌」三步走（高频场景，必按顺序）
+
+```
+① 实时行情 + 同板块 2–3 只 + 大盘  → 判是否个股独立下行
+② 最近 30 条公告
+③ 当日新闻 / 股吧
+```
+
+**三步皆空 = 存量矛盾 + 筹码 / 技术性杀跌** —— 此时**必须明说「无公告级新利空」，不得编造导火索**。
+
+---
+
+## ⑪ neodata 两个已知畸变
+
+1. **小数点畸变**：小数点后紧跟 `00` 时须删两个 `0`（`3.008027` → `3.8027`）
+2. **假 PE**：亏损或含一次性收益的标的会返回 `5.0` 类坏值。**`PE < 15` 或 `PE > 150` 必须手工复核**
+
+**token**：需先连接云服务再取，**有效期 12 小时**。
+
+---
+
+## 数据来源声明
+
+本框架下所有产出的关键数字必须标注 **来源 + 时点 + 口径**。常用来源：
+- 腾讯行情（`qt.gtimg.cn`）
+- 东方财富数据中心
+- 公司公告与定期报告
+
+概率与假设必须显式列出，不得以「一般认为」代替。
