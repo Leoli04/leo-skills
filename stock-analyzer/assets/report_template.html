@@ -199,7 +199,7 @@
   <button class="nav-btn" onclick="showSection('financial', this)">② 财务数据</button>
   <button class="nav-btn" onclick="showSection('technical', this)">③ 技术分析</button>
   <button class="nav-btn" onclick="showSection('sentiment', this)">④ 市场情绪</button>
-  <button class="nav-btn" onclick="showSection('competition', this)">⑤ 竞品对比</button>
+  <button class="nav-btn" onclick="showSection('competition', this)">⑤ 行业与竞品</button>
   <button class="nav-btn" onclick="showSection('valuation', this)">⑥ 估值健康</button>
   <button class="nav-btn" onclick="showSection('macro', this)">⑦ 宏观环境</button>
   <button class="nav-btn" onclick="showSection('risk', this)">⑧ 主要风险</button>
@@ -214,30 +214,30 @@
 <div class="section active" id="overview">
   <div class="section-title">公司概况</div>
 
-  <!-- ★ 方法论 v2.3 第 0 步：估值锚定位 -->
+  <!-- ★ 估值锚定位：先确定用什么尺度衡量这家公司 -->
   <div class="anchor-box">
     <div class="an-head">
-      <span class="an-type">第 0 步 · 估值锚定位</span>
+      <span class="an-type">估值锚定位</span>
       <span class="tag tag-red">形态：轻资产</span>
-      <span class="tag tag-gray">先归类，再谈贵贱</span>
+      <span class="tag tag-gray">先定生意性质，再判断估值高低</span>
     </div>
     <div class="an-grid">
       <div class="an-cell">
-        <strong>主锚（合法尺子）</strong>
+        <strong>适用估值方法</strong>
         <span class="allowed-tag">正常化 PE</span><span class="allowed-tag">DDM</span><span class="allowed-tag">FCF 收益率 三法收敛</span>
       </div>
       <div class="an-cell">
-        <strong>禁用尺子（硬约束，用了结论即不采纳）</strong>
+        <strong>不适用估值方法（用了会得出错误结论）</strong>
         <span class="banned-tag">PB（轻资产公司 PB 不适用）</span>
       </div>
       <div class="an-cell">
-        <strong>归类依据</strong>
+        <strong>为什么这样定性</strong>
         固定资产占比低、核心资产为点位资源与客户网络，账面净资产不反映真实盈利能力，故 PB 无效。
       </div>
       <div class="an-cell">
-        <strong>是否需先走周期专章</strong>
-        否 · 非强周期 / 资源周期 / 周期新材料形态，无需周期定位。<br>
-        <span style="color:#c62828;">（若为周期类：须先做定位五要素 —— 价格 / 供给 / 需求 / 库存 / 成本曲线，缺一不可）</span>
+        <strong>是否属于周期股</strong>
+        否 —— 非强周期 / 资源周期 / 周期新材料形态，无需周期定位。<br>
+        <span style="color:#c62828;">（若为周期类：须先判断所处周期位置 —— 价格 / 供给 / 需求 / 库存 / 成本曲线，缺一不可）</span>
       </div>
     </div>
   </div>
@@ -265,18 +265,74 @@
     </div>
   </div>
 
-  <div class="grid-3">
-    <div class="card">
-      <div class="chart-title">行业地位</div>
-      <div class="chart-wrap" style="height:200px;">
-        <canvas id="marketShareChart" role="img" aria-label="梯媒市场份额分布">加载中...</canvas>
-      </div>
+  <div class="card" style="margin-bottom:16px;">
+    <div class="chart-title">行业地位</div>
+    <div class="chart-wrap" style="height:180px;max-width:520px;margin:0 auto;">
+      <canvas id="marketShareChart" role="img" aria-label="梯媒市场份额分布">加载中...</canvas>
     </div>
-    <div class="card" style="grid-column: span 2;">
-      <div class="chart-title">营收结构（2025年按客户行业）</div>
-      <div class="chart-wrap" style="height:200px;">
-        <canvas id="revenueStructChart" role="img" aria-label="2025年营收行业结构">加载中...</canvas>
-      </div>
+  </div>
+
+  <!-- ★ 营收结构 vs 利润结构（同一图内双轴对照，防止单一营收图误导估值锚） -->
+  <div class="card" style="margin-bottom:16px;">
+    <div class="chart-title">营收结构 vs 利润结构（2025年按客户行业，亿元 · 同一口径对照）</div>
+    <div class="chart-wrap" style="height:300px;">
+      <canvas id="structCompareChart" role="img" aria-label="2025年营收与利润对照">加载中...</canvas>
+    </div>
+    <div style="font-size:11.5px;color:#666;margin-top:10px;line-height:1.8;">
+      [一句话核心结论：收入靠什么，利润靠什么。]<br>
+      [营收第一的业务占比多少、毛利率多少、只贡献多少利润（蓝柱 vs 红柱反差）；利润第一的业务营收多少、贡献利润多少。]<br>
+      <strong style="color:#c62828;">所以：只看营收会得出「这是 XX 公司」的错误结论，进而误用 XX 尺子估值。</strong>[禁用某尺子的理由，就来自这张图。]<br>
+      <span style="color:#999;">口径：[分部口径 / 利润是否含费用分摊 / 数据来源与时点]。横轴按营收降序排列，两系列共用同一横轴与同一纵轴（单位：亿元）。</span>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:16px;border-left:4px solid #c62828;">
+    <div class="chart-title" style="color:#c62828;">分部明细（营收 / 毛利率 / 利润 / 利润占比）</div>
+    <div style="margin-top:8px;">
+      <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+          <thead><tr style="background:#f7f7fa;">
+            <th style="padding:8px;text-align:left;border-bottom:2px solid #eee;">分部/业务</th>
+            <th style="padding:8px;text-align:right;border-bottom:2px solid #eee;">营收（亿）</th>
+            <th style="padding:8px;text-align:right;border-bottom:2px solid #eee;">营收占比</th>
+            <th style="padding:8px;text-align:right;border-bottom:2px solid #eee;">毛利率</th>
+            <th style="padding:8px;text-align:right;border-bottom:2px solid #eee;">利润（亿）</th>
+            <th style="padding:8px;text-align:right;border-bottom:2px solid #eee;">利润占比</th>
+          </tr></thead>
+          <tbody>
+            <tr style="background:#fef9fb;">
+              <td style="padding:8px;border-bottom:1px solid #f2f2f2;"><strong>[利润支柱业务]</strong></td>
+              <td style="padding:8px;text-align:right;border-bottom:1px solid #f2f2f2;">[营收]</td>
+              <td style="padding:8px;text-align:right;border-bottom:1px solid #f2f2f2;">[占比]</td>
+              <td style="padding:8px;text-align:right;border-bottom:1px solid #f2f2f2;color:#e94560;">[毛利率]</td>
+              <td style="padding:8px;text-align:right;border-bottom:1px solid #f2f2f2;"><strong>[利润]</strong></td>
+              <td style="padding:8px;text-align:right;border-bottom:1px solid #f2f2f2;color:#e94560;"><strong>[利润占比]</strong></td>
+            </tr>
+            <tr>
+              <td style="padding:8px;border-bottom:1px solid #f2f2f2;">[低毛利规模业务]</td>
+              <td style="padding:8px;text-align:right;border-bottom:1px solid #f2f2f2;">[营收]</td>
+              <td style="padding:8px;text-align:right;border-bottom:1px solid #f2f2f2;">[占比]</td>
+              <td style="padding:8px;text-align:right;border-bottom:1px solid #f2f2f2;color:#00c853;">[毛利率]</td>
+              <td style="padding:8px;text-align:right;border-bottom:1px solid #f2f2f2;">[利润]</td>
+              <td style="padding:8px;text-align:right;border-bottom:1px solid #f2f2f2;color:#00c853;">[利润占比]</td>
+            </tr>
+            <tr>
+              <td style="padding:8px;border-bottom:1px solid #f2f2f2;">[其余业务 1]</td>
+              <td style="padding:8px;text-align:right;border-bottom:1px solid #f2f2f2;">[营收]</td>
+              <td style="padding:8px;text-align:right;border-bottom:1px solid #f2f2f2;">[占比]</td>
+              <td style="padding:8px;text-align:right;border-bottom:1px solid #f2f2f2;">[毛利率]</td>
+              <td style="padding:8px;text-align:right;border-bottom:1px solid #f2f2f2;">[利润]</td>
+              <td style="padding:8px;text-align:right;border-bottom:1px solid #f2f2f2;">[利润占比]</td>
+            </tr>
+            <tr>
+              <td style="padding:8px;">[其余业务 2]</td>
+              <td style="padding:8px;text-align:right;">[营收]</td>
+              <td style="padding:8px;text-align:right;">[占比]</td>
+              <td style="padding:8px;text-align:right;">[毛利率]</td>
+              <td style="padding:8px;text-align:right;">[利润]</td>
+              <td style="padding:8px;text-align:right;">[利润占比]</td>
+            </tr>
+          </tbody>
+      </table>
     </div>
   </div>
 
@@ -506,7 +562,7 @@
     </div>
   </div>
 
-  <!-- ★ 方法论 v2.3：有效阻力识别（补第 8 步③ R/R 分子的空缺） -->
+  <!-- ★ 有效阻力识别（R/R 分子取值依据） -->
   <div class="card" style="margin-top:16px;">
     <div class="chart-title" style="margin-bottom:6px;">有效阻力识别 · R/R 分子的唯一合法来源</div>
     <div style="font-size:11px;color:#c62828;margin-bottom:12px;">
@@ -549,42 +605,37 @@
 <!-- ④ 市场情绪 -->
 <div class="section" id="sentiment">
   <div class="section-title">市场情绪分析</div>
-  <div class="grid-3">
-    <div class="card" style="text-align:center;">
-      <div class="chart-title">机构综合评级</div>
-      <div style="display:flex;justify-content:center;margin:14px 0;">
-        <div class="rating-badge rating-buy">买入</div>
-      </div>
-      <div style="font-size:12px;color:#666;line-height:1.6;">26家分析师覆盖<br>强力推荐 80.77% | 买入 19.23%</div>
+  <div class="card" style="margin-bottom:16px;">
+    <div class="chart-title">投资者情绪仪表盘</div>
+    <div class="chart-wrap" style="height:220px;">
+      <canvas id="sentimentChart" role="img" aria-label="投资者情绪分布">加载中...</canvas>
     </div>
-    <div class="card">
-      <div class="chart-title">分析师目标价区间</div>
-      <div style="margin-top:10px;">
-        <div class="progress-row">
-          <div class="pr-head"><span>乐观目标价</span><span style="color:#e94560;font-weight:500;">8.5元</span></div>
-          <div class="progress-bar"><div class="progress-fill" style="width:85%;background:#e94560;"></div></div>
-        </div>
-        <div class="progress-row">
-          <div class="pr-head"><span>中性目标价</span><span style="color:#2196f3;font-weight:500;">7.0元</span></div>
-          <div class="progress-bar"><div class="progress-fill" style="width:70%;background:#2196f3;"></div></div>
-        </div>
-        <div class="progress-row">
-          <div class="pr-head"><span>当前价</span><span style="color:#666;">5.02元</span></div>
-          <div class="progress-bar"><div class="progress-fill" style="width:50%;background:#999;"></div></div>
-        </div>
-        <div class="progress-row">
-          <div class="pr-head"><span>保守目标价</span><span style="color:#00c853;font-weight:500;">6.0元</span></div>
-          <div class="progress-bar"><div class="progress-fill" style="width:60%;background:#00c853;"></div></div>
-        </div>
-        <div style="font-size:11px;color:#aaa;margin-top:6px;">机构一致预期2026年净利润60.85亿（+107%）</div>
+  </div>
+
+  <!-- ★ 卖方目标价三面检验（必做）—— 防止「未折现名义价」制造便宜感 -->
+  <div class="card" style="margin-bottom:16px;border-left:4px solid #e94560;">
+    <div class="chart-title" style="margin-bottom:12px;">⚠ 卖方目标价 X 元不表示「上涨空间 +YY%」—— 四个必须先看清的问题</div>
+    <div style="font-size:13px;color:#444;line-height:1.85;">
+      卖方目标价是投资决策里<strong>最容易制造「便宜感」的数字</strong>：一个 X 元的均值配上现价，第一反应就是「上涨空间很大，很便宜」。<strong>但这个读法有四个问题</strong>，逐条拆开看：<br><br>
+      <strong>① 它是未折现的名义价，且常是多来源里的最高值。</strong>
+      同一时点不同来源的读数往往有明显差异（[来源 A] X 元 / [来源 B] Y 元 / 近期研报 Z 元）。<strong>本报告用的是哪一版、是否为最高值，必须写清</strong>。这些目标价都是「未来某年的利润 × 某倍 PE」，须补 12% 折现（3 年因子 0.7118）才与现价可比：
+      <div style="display:flex;gap:22px;flex-wrap:wrap;margin:10px 0 12px;font-size:12.5px;">
+        <span>[最高] X → <strong style="color:#4a90e2;">折现后</strong>（+ZZ%）</span>
+        <span>[均值] Y → <strong style="color:#4a90e2;">折现后</strong>（+ZZ%）</span>
+        <span>[最低] Z → <strong style="color:#4a90e2;">折现后</strong>（+ZZ%）</span>
       </div>
+      <strong>② 折现后的卖方目标价，往往连本报告自己的乐观情景都够不到。</strong>
+      卖方折现区间 [区间]，本报告乐观折现价 [X] 元 —— 即<strong>最乐观的卖方 ≈ 本报告的乐观情景</strong>。卖方并不比你更看好，只是没折现。<br><br>
+      <strong>③ 卖方目标价高，通常高在 PE 倍数，不在盈利预测。</strong>
+      券商自己的 [年份]E 归母预测 [X–Y] 亿，与本报告中性情景 [Z] 亿对比 —— 若两者接近，<strong>则真正的分歧只在给的倍数</strong>（券商 [A–B]x vs 本报告 [C]x）。若券商用「公司历史估值均值」定倍数，要追问该均值是否形成于<strong>盈利低位</strong>（是则方向反了）。<br><br>
+      <strong>④ 看卖方最近的动作：上调预测还是「下调预测 + 维持评级」。</strong>
+      若券商在下调盈利预测的同时维持「强推 / 增持」且目标价下移，说明<strong>评级已滞后于其自身模型</strong>；而报告顶部若用「过去 12 个月均值」，还要再滞后一层。
     </div>
-    <div class="card">
-      <div class="chart-title">投资者情绪仪表盘</div>
-      <div class="chart-wrap" style="height:200px;">
-        <canvas id="sentimentChart" role="img" aria-label="投资者情绪分布">加载中...</canvas>
-      </div>
-    </div>
+  </div>
+
+  <div style="font-size:11.5px;color:#888;line-height:1.7;margin-bottom:14px;">
+    <strong>为什么卖方评级系统性偏乐观（行业性事实，非本报告猜测）：</strong>
+    A 股券商研报 90% 以上给「买入 / 增持」，卖出评级接近于零 —— 卖方评级与上市公司承销、融资等业务关系挂钩，给「卖出」会切断业务往来。学术实证中，A 股券商目标价 6 个月后平均偏离实际股价约 32%、12 个月约 47%；海外研究显示 12 个月目标价兑现率不足 50%。<strong>结论：目标价应读作「卖方立场声明」，不是价格预测。</strong>
   </div>
 
   <div class="card" style="margin-bottom:16px;">
@@ -617,9 +668,43 @@
   </div>
 </div>
 
-<!-- ⑤ 竞品对比 -->
+<!-- ⑤ 行业与竞品 -->
 <div class="section" id="competition">
-  <div class="section-title">竞品对比分析</div>
+  <div class="section-title">行业与竞品分析</div>
+
+  <!-- ★ 行业景气定位（五档刻度 +2~−2）—— 直接影响情景概率的取法 -->
+  <div class="card" style="border-left:4px solid #4a90e2;">
+    <div class="chart-title">行业景气定位（五档刻度 · 影响下面情景概率的取法）</div>
+    <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:14px 0 10px;">
+      <div style="background:#f6f4f0;border:1px solid #d8d2c8;border-radius:10px;padding:12px 18px;text-align:center;min-width:120px;">
+        <div style="font-size:12px;color:#5a5a5a;">当前档位</div>
+        <div style="font-size:26px;font-weight:700;color:#5a5a5a;line-height:1.2;">{{档位}}</div>
+        <div style="font-size:13px;color:#5a5a5a;font-weight:600;">{{档位名称}}</div>
+      </div>
+      <div style="flex:1;min-width:300px;font-size:12.5px;color:#444;line-height:1.8;">
+        <strong>定档依据</strong>：[用哪几个可查先行指标把赛道定到这一档；说不出指标就判 0（平稳），不得凭印象给 +1/+2]。
+        档位只描述<strong>当前已发生的事实</strong>，不预测未来路径。[为什么是这一档而不是相邻档，须给出理由]
+      </div>
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:6px;">
+      <thead><tr style="background:#f7f7fa;">
+        <th style="padding:7px;text-align:left;border-bottom:2px solid #eee;">先行指标</th>
+        <th style="padding:7px;text-align:right;border-bottom:2px solid #eee;">实测值</th>
+        <th style="padding:7px;text-align:center;border-bottom:2px solid #eee;">指向</th>
+      </tr></thead>
+      <tbody>
+        <tr><td style="padding:7px;border-bottom:1px solid #f2f2f2;">[指标 1：如商品价十年分位 / 产能利用率]</td><td style="padding:7px;text-align:right;border-bottom:1px solid #f2f2f2;">[实测值]</td><td style="padding:7px;text-align:center;border-bottom:1px solid #f2f2f2;">[偏 +1 / 偏 −1]</td></tr>
+        <tr><td style="padding:7px;border-bottom:1px solid #f2f2f2;">[指标 2：如库存天数及分位 / 在建工程÷固定资产]</td><td style="padding:7px;text-align:right;border-bottom:1px solid #f2f2f2;">[实测值]</td><td style="padding:7px;text-align:center;border-bottom:1px solid #f2f2f2;">[指向]</td></tr>
+        <tr><td style="padding:7px;border-bottom:1px solid #f2f2f2;">[指标 3：如同业营收同比]</td><td style="padding:7px;text-align:right;border-bottom:1px solid #f2f2f2;">[实测值]</td><td style="padding:7px;text-align:center;border-bottom:1px solid #f2f2f2;">[指向]</td></tr>
+      </tbody>
+    </table>
+    <div style="font-size:11.5px;color:#888;margin-top:10px;line-height:1.75;">
+      <strong>综合判定：{{档位}}（{{档位名称}}）</strong> —— [一句话结论：赛道顺风还是逆风，以及它对公司是 β 还是 α]。
+      <span style="color:#c62828;">按五档规则，{{档位}} 档要求「[乐观 / 中性 / 悲观]概率[上调 / 下调]」—— 该调整须在下方「估值与财务健康」的情景概率中落地，并写明调整了几个百分点。</span><br>
+      <span style="color:#999;">口径：[先行指标来源与时点]。先行指标只列已实测项，未取到的指标不列、不估算（零编造原则）。</span>
+    </div>
+  </div>
+
   <div class="grid-2">
     <div class="card">
       <div class="chart-title">梯媒市场格局（收购前 vs 收购后）</div>
@@ -737,7 +822,7 @@
   <div class="section-title">估值与财务健康</div>
   <div class="grid-4">
     <div class="metric-card">
-      <div class="m-lbl">当前PE（TTM）</div>
+      <div class="m-lbl">当前PE（动态）</div>
       <div class="m-val neutral">约24x</div>
       <div class="m-change neg">基于2025实际利润</div>
     </div>
@@ -760,7 +845,7 @@
 
   <div class="grid-2">
     <div class="val-section">
-      <h3>PE / PB 分位双窗口（第 8 步① 分位指纹）</h3>
+      <h3>PE / PB 分位双窗口（近两年 vs 全历史）</h3>
       <div style="font-size:11px;color:#c62828;margin-bottom:10px;">背离时以十年 / 全历史为准 —— 只看近两年会把「PE 低 + PB 高 = 盈利在顶」误判为便宜</div>
       <table class="comp-table">
         <thead><tr><th>指标</th><th>近两年分位</th><th>十年 / 全历史分位</th><th>指纹读法</th></tr></thead>
@@ -825,6 +910,11 @@
         <div class="ep-row"><span class="ep-lbl">判定：期望价 ÷ 现价</span><span class="ep-val ep-pass">+53.4% ≥ +15% ⇒ 通过</span></div>
         <div style="font-size:11px;color:rgba(255,255,255,0.45);margin-top:10px;line-height:1.7;">
           折现价 = 目标市值 ÷ (1 + WACC)<sup>n</sup>，WACC 取 12%。未做折现与概率加权处理的目标价，一律视为卖方营销材料。
+        </div>
+        <div style="font-size:11px;color:rgba(255,255,255,0.55);margin-top:8px;line-height:1.7;border-top:1px solid rgba(255,255,255,0.12);padding-top:8px;">
+          <strong>概率的行业调整依据（见「行业与竞品」的景气定位）</strong>：行业景气档位 <strong>{{档位}}</strong>（{{档位名称}}），领先指标为[先行指标 + 实测值]。
+          按五档规则，{{档位}} 档须「[乐观 / 中性 / 悲观]概率[上调 / 下调]」—— 本报告在「公司自身基本面基准概率（{{基准概率}}）」之上，
+          调整为 [{{最终概率}}]，<strong>单情景调整幅度 [X]pct，未超 ±10pct 上限</strong>。
         </div>
       </div>
   </div>
@@ -1283,7 +1373,7 @@
         <div class="bomb-action">会前减仓</div>
       </div>
       <div style="background:#fff3e0;border-radius:6px;padding:10px 12px;margin-top:12px;font-size:12px;color:#e65100;">
-        <strong>风控正解：</strong>可跳空标的的硬止损属<strong>假性风控</strong>（两日可 −15.9%）。以<strong>仓位为第一风控</strong> —— 按跳空 −25% ~ −30% 定价，使单一标的组合冲击 ≤ 1.5%。
+        <strong>风控正解：</strong>可跳空标的的硬止损<strong>实际保护作用有限</strong>（两日可 −15.9%）。以<strong>仓位为第一风控</strong> —— 按跳空 −25% ~ −30% 定价，使单一标的组合冲击 ≤ 1.5%。
       </div>
     </div>
   </div>
@@ -1424,22 +1514,29 @@
   </div>
 </div>
 
-<!-- ⑪ 自检清单（方法论 v2.3 出清单前 38 项） -->
+<!-- ⑪ 自检清单（方法论 v2.3 出清单前 39 项） -->
 <div class="section" id="checklist">
-  <div class="section-title">出清单前自检 · 38 项</div>
+  <div class="section-title">出清单前自检 · 48 项</div>
   <div style="background:#1a1a2e;border-radius:10px;padding:16px 20px;margin-bottom:16px;">
-    <div style="font-size:13px;color:#ffd700;font-weight:500;">逐项打勾。任何一项未打勾，结论不得发布 —— 不是「标注一下就行」。</div>
+    <div style="font-size:13px;color:#ffd700;font-weight:500;margin-bottom:10px;">逐项打勾。任何一项未打勾，结论不得发布 —— 不是「标注一下就行」。</div>
+    <div style="display:flex;flex-wrap:wrap;gap:18px;font-size:11.5px;">
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#00c853;margin-right:5px;"></span><strong style="color:#00c853;">ok</strong> = 已检查且通过</span>
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#e94560;margin-right:5px;"></span><strong style="color:#e94560;">no</strong> = 已检查但<strong>未通过</strong>（判否项，须对应结论）</span>
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#ffd700;margin-right:5px;"></span><strong style="color:#ffd700;">warn</strong> = 存在问题但可接受，已加注说明</span>
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#888;margin-right:5px;"></span><strong style="color:#bbb;">na</strong>（not applicable）= 本标的不适用该项，已说明理由</span>
+    </div>
   </div>
 
   <div class="grid-2">
     <div class="card">
       <div class="chart-title" style="margin-bottom:10px;">形态与口径</div>
       <ul class="checklist">
-        <li class="ok">已按 15 类形态归类，未使用任何禁用估值尺子</li>
+        <li class="ok">已先确认公司属于哪一类生意，再据此选定估值方法，未套用不匹配的估值口径</li>
         <li class="ok">已确认跨年口径可比（会计政策切换、A/H、集团 vs 上市公司）</li>
         <li class="ok">涉及权益法收益时，已剔除其偿债 / 分红能力</li>
-        <li class="ok">股本为摊薄后口径；分红率已用 DividendTTM 交叉验证</li>
-        <li class="ok">每个图表承载独立信息，不存在两图同源重复渲染；营收结构已看近 3 年 + 近 4 期而非单期</li>
+        <li class="ok">股本为摊薄后口径；分红金额已用近 12 个月实际派息总额交叉验证</li>
+        <li class="ok">每个图表承载独立信息，不存在两图同源重复渲染；营收结构已看近 3 个完整年度 + 最近 4 个季度，而非只看单期</li>
+        <li class="ok">营收结构与利润结构成对呈现（同一维度 / 口径 / 时点，两图排序相反），并已用对照表说明为何不适用某种估值方法</li>
       </ul>
       <div class="chart-title" style="margin:14px 0 10px;">环境与择时</div>
       <ul class="checklist">
@@ -1449,16 +1546,17 @@
         <li class="ok">有效阻力由筹码密集区 / 前高识别（且该位置出现过放量滞涨）</li>
         <li class="ok">筹码判断全部落到可查数据，未使用「庄家 / 主力」叙事</li>
         <li class="ok">涉及回购，已查注销 vs 库存股 / 资金来源 / 回购价分位</li>
-        <li class="ok">资金进出趋势已给出（近 20 日总资金 / 主力日度 + 分区间净额汇总 + 近 12 周主力净流入），周度极端值已截断且真实数值上图标明</li>
+        <li class="ok">资金进出趋势已给出（分区间净额汇总：今日 / 3 日 / 5 日 / 10 日 / 20 日 + 主力与北向对照）。<strong>所有资金数据均为实测值；未取到逐日数据时只画区间柱图，禁止用「模拟日度」或按区间反推的伪逐日序列充数</strong></li>
+        <li class="ok">行业景气已定位到档（+2~−2），且每一档挂了可查先行指标（价格分位 / 产能利用率 / 库存天数 / 同业营收同比）。未取到指标时已判 0（平稳）而非凭印象给档；档位只描述当前事实，不预测未来路径</li>
       </ul>
       <div class="chart-title" style="margin:14px 0 10px;">周期</div>
       <ul class="checklist">
         <li class="ok">已区分「周期型 / 结构型」，判据为「价差回落时利润还在不在」</li>
-        <li class="ok">周期定位五要素齐全，尤其供给端</li>
-        <li class="ok">尺子已随周期位置切换，底部 / 顶部 / 下行三段未使用 PE</li>
+        <li class="ok">周期位置判断要素齐全（价格 / 供给 / 需求 / 库存 / 成本），尤其供给端</li>
+        <li class="ok">估值口径已随周期位置切换，底部 / 顶部 / 下行三段未使用 PE</li>
         <li class="ok">把「PE 低」读作卖出信号，并已验分母持续性</li>
         <li class="ok">横向比较用单位产能指标而非绝对市值 / 绝对 PE</li>
-        <li class="ok">退出按「卖在景气」四触发写死，未用季报利润判拐点</li>
+        <li class="ok">退出按「卖在景气」四类触发写死，未用季报利润判拐点</li>
       </ul>
     </div>
     <div class="card">
@@ -1478,13 +1576,23 @@
       </ul>
       <div class="chart-title" style="margin:14px 0 10px;">算价</div>
       <ul class="checklist">
+        <li class="ok">卖方目标价已做三面检验（折现后可比价 / 多平台口径交叉核对 / 与自身情景对照），未把未折现的名义价直接读作「上涨空间」</li>
+        <li class="ok">顶部指标卡的目标价取中位口径而非最高值，避免一边批判卖方乐观、一边用最高值放大便宜感</li>
+        <li class="ok">PE 口径已反算验证（市值 ÷ PE = 隐含净利，且与所标口径对得上）？若用动态 PE，已说明是否含一次性项目并给出剔除后的经常性 PE</li>
+        <li class="ok">分位（取自 A 序列）与绝对倍数（取自 B 序列）未跨口径并列比较，已显式区分</li>
         <li class="ok">PE 与 PB 分位双窗口已同看，背离已解释</li>
         <li class="ok">目标价已折现 + 概率加权，情景概率之和 = 100%</li>
         <li class="ok">当前买入胜率已测算（胜率数字 + 门槛「情景价 ≥ 现价 × 1.15」+ 三档判定 + 对应仓位），未用定性表述代替</li>
         <li class="ok">胜率与赔率已双维校准 —— 未因「期望价够高」就跳过胜率判定</li>
-        <li class="ok">横向 / 四象限图每根轴都全部可观测，无用「示意」坐标凑图；不可观测时已降维为单轴真图</li>
+        <li class="ok">横向 / 四象限图每根轴都全部可观测，无用估算坐标凑图；不可观测时已降维为单轴真图</li>
         <li class="ok">R/R 分子用的是「最近有效阻力」，不是合理价值上沿</li>
         <li class="ok">期望价 ÷ 现价 ≥ +15%？未达标已明确写「不买」而非「可以试试」</li>
+      </ul>
+      <div class="chart-title" style="margin:14px 0 10px;">跨节一致性</div>
+      <ul class="checklist">
+        <li class="ok">口径查：同一收入项在同比 / 环比两处出现时已各自标注，未让读者误读为「一笔贡献两笔增量」</li>
+        <li class="ok">加总查：分部 / 分项表加总 = 并表总额；差额已单列「其他 / 内部抵消」或注明未披露</li>
+        <li class="ok">假设查：情景隐含增长率若高于正文论证的趋势，已正面拆解该情景由哪几块拼出</li>
       </ul>
       <div class="chart-title" style="margin:14px 0 10px;">闭环</div>
       <ul class="checklist">
@@ -1496,12 +1604,13 @@
         <li class="ok">同一事实在正文 / 括注 / 图内标注 / JS 数据集四处一致（已跑 verify_report.py）</li>
         <li class="ok">卡片数字与图表序列同源同口径，口径不同时已加注脚说明</li>
         <li class="ok">版本号统一、自检标题数 = 实际条目数、折现说明算术已手算验过</li>
+        <li class="ok">报告正文以投资者能读懂的业务语言写成，未出现内部分析工序术语（如步骤编号、方法代号、内部文件引用），读者无需了解分析方法本身即可读完</li>
       </ul>
     </div>
   </div>
 
   <div class="card">
-    <div class="chart-title" style="margin-bottom:10px;">红线与陷阱速查（43 条红线 / 26 个陷阱，详见 references/redlines.md）</div>
+    <div class="chart-title" style="margin-bottom:10px;">高风险项速查（本报告已显式处理的高风险判断）</div>
     <div style="font-size:12px;color:#555;line-height:1.9;">
       本报告在以下高风险项上已显式处理：
       <br>· <strong>低 PE 校验</strong> —— 已先验「分母能不能持续」，未把低 PE 直接读作便宜
@@ -1538,17 +1647,16 @@ new Chart(document.getElementById('marketShareChart'), {
   options: { ...commonOpts, cutout: '55%', plugins: { ...commonOpts.plugins, tooltip: { ...commonOpts.plugins.tooltip, callbacks: { label: c => c.label + ': ' + c.parsed + '%' } } } }
 });
 
-new Chart(document.getElementById('revenueStructChart'), {
+new Chart(document.getElementById('structCompareChart'), {
   type: 'bar',
   data: {
     labels: ['互联网', '日用消费品', '医疗健康', '食品饮料', '房产家居', '通讯', '其他'],
-    datasets: [{
-      label: '收入（亿元）',
-      data: [32.4, 28.5, 15.2, 14.8, 10.3, 8.9, 17.5],
-      backgroundColor: ['#e94560','#2196f3','#00c853','#ffd700','#ff9800','#9c27b0','#999']
-    }]
+    datasets: [
+      { label: '营收（亿元）', data: [32.4, 28.5, 15.2, 14.8, 10.3, 8.9, 17.5], backgroundColor: 'rgba(74,144,226,0.85)', borderColor: '#4a90e2', borderWidth: 1 },
+      { label: '利润总额（亿元）', data: [0.6, 15.1, 3.2, 9.8, 2.1, 4.5, 8.7], backgroundColor: 'rgba(233,69,96,0.85)', borderColor: '#e94560', borderWidth: 1 }
+    ]
   },
-  options: { ...commonOpts, scales: { x: { ticks: { color: '#888', font: { size: 11 } }, grid: { display: false } }, y: { ticks: { color: '#888', font: { size: 11 } }, grid: { color: '#f0f0f0' } } }, plugins: { ...commonOpts.plugins, tooltip: { ...commonOpts.plugins.tooltip, callbacks: { label: c => c.parsed.y.toFixed(1) + '亿元' } } } }
+  options: { ...commonOpts, scales: { x: axX, y: { ...axY, ticks: { color: '#888', font: { size: 11 }, callback: v => v + '亿' } } }, plugins: { ...commonOpts.plugins, legend: { display: true, position: 'top', labels: { color: '#666', font: { size: 11 }, boxWidth: 12, usePointStyle: true, pointStyle: 'rect' } }, tooltip: { ...commonOpts.plugins.tooltip, callbacks: { label: c => c.dataset.label + ': ' + c.parsed.y.toFixed(2) + ' 亿元' } } } }
 });
 
 new Chart(document.getElementById('revenueChart'), {

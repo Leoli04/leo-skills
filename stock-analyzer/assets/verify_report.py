@@ -21,9 +21,9 @@ import sys
 # ---------------------------------------------------------------- 计数基准
 # 这三组数字必须与 references/redlines.md 的标题保持一致。
 # 若你改了 redlines.md 的条目数，同步改这里。
-EXPECT_REDLINES = 43      # 红线条数
-EXPECT_TRAPS = 26         # 陷阱个数
-EXPECT_SELFCHECK = 35     # 自检项数
+EXPECT_REDLINES = 50      # 红线条数
+EXPECT_TRAPS = 34         # 陷阱个数
+EXPECT_SELFCHECK = 48     # 自检项数
 
 # 阈值口径（与 methodology.md 保持一致，改了要同步）
 WACC = 0.12               # 折现率
@@ -86,6 +86,52 @@ def check_structure(html):
         add("PASS", "canvas 全部被引用", f"{len(ids)} 个")
 
 
+def check_struct_pairing(html):
+    """① 公司概况硬规则：营收结构与利润结构必须在同一图中对照呈现。
+
+    判据（兼容两种合法实现）：
+      A. 单张合并图：canvas id = structCompareChart，且含「营收」「利润」两个数据集
+      B. 两张并排图：revenueStructChart + profitStructChart 同时存在
+    """
+    merged = "structCompareChart" in html
+    paired = ("revenueStructChart" in html) and ("profitStructChart" in html)
+
+    if not (merged or paired):
+        add("FAIL", "营收/利润结构对照",
+            "缺少合并图 structCompareChart，也未见 revenueStructChart + profitStructChart 双图")
+        return
+
+    if merged:
+        add("PASS", "营收/利润结构成对", "合并图 structCompareChart")
+        # 合并图应含两条数据集（营收 / 利润）
+        seg = html[html.find("structCompareChart"):]
+        seg = seg[:seg.find("});") + 3] if "});" in seg else seg[:1500]
+        has_rev = ("营收" in seg)
+        has_pro = ("利润" in seg)
+        if has_rev and has_pro:
+            add("PASS", "合并图双系列", "含「营收」与「利润」两条数据集")
+        else:
+            add("WARN", "合并图双系列",
+                f"营收={has_rev} 利润={has_pro} —— 合并图应同时含两个数据集")
+        return
+
+    # 双图分支
+    add("PASS", "营收/利润结构成对", "双图存在（revenueStructChart + profitStructChart）")
+
+    def labels_of(cid):
+        m = re.search(
+            r"getElementById\('" + cid + r"'\)[\s\S]{0,400}?labels:\s*\[([^\]]*)\]",
+            html)
+        if not m:
+            return None
+        return [x.strip().strip("'\"") for x in m.group(1).split(",") if x.strip()]
+
+    lr = labels_of("revenueStructChart")
+    lp = labels_of("profitStructChart")
+    if lr and lp and lr != lp:
+        add("PASS", "营收/利润两图排序", "两图 labels 顺序不同（形成对照）")
+
+
 def check_version(html):
     """版本号一致性：不应残留旧版本标记。"""
     vers = re.findall(r"v2\.\d", html)
@@ -107,7 +153,7 @@ def check_counts(html):
         # 取 checklist section 之后的 li 总数
         idx = html.find('id="checklist"')
         seg = html[idx:] if idx >= 0 else html
-        actual = len(re.findall(r'<li class="(?:ok|no|warn|na)"', seg))
+        actual = len(re.findall(r'<li class="(?:ok|no|warn|na|notapp)"', seg))
         if actual == 0:
             actual = len(re.findall(r"<li\b", seg))
         if claimed != actual:
@@ -229,10 +275,14 @@ def check_duplicate_numbers(html):
         add("PASS", "赔率写法唯一")
 
 
-def check_placeholders(html):
+def check_placeholders(html, is_template=False):
     """不得残留占位符 / 加载中 / TODO。"""
     bad = []
-    for pat in ["加载中...", "TODO", "待补充", "XXXX", "{{", "占位"]:
+    pats = ["加载中...", "TODO", "待补充", "XXXX", "占位"]
+    if not is_template:
+        # 模板文件本身以 {{VAR}} 为设计占位符，检查时豁免
+        pats.append("{{")
+    for pat in pats:
         n = html.count(pat)
         if n:
             bad.append(f"{pat}×{n}")
@@ -300,11 +350,13 @@ def main():
     print("=" * 62)
 
     check_structure(html)
+    check_struct_pairing(html)
     check_version(html)
     check_counts(html)
     check_valuation_math(html)
     check_duplicate_numbers(html)
-    check_placeholders(html)
+    is_tpl = "report_template" in args.report.replace("\\", "/").split("/")[-1]
+    check_placeholders(html, is_template=is_tpl)
     check_sourced(html)
     check_cdn(html)
 
@@ -325,7 +377,7 @@ def main():
     if fails:
         print("\n✗ 存在 FAIL，逐项修正后重跑；机器验不了的口径与逻辑仍需人工读。")
     else:
-        print("\n✓ 机器可验项全部通过。仍需人工确认：踩坑 8 条（见 SKILL.md Phase 9.5）。")
+        print("\n✓ 机器可验项全部通过。仍需人工确认：Phase 9.5 第二遍 10 条（见 SKILL.md）。")
     return 1 if fails else 0
 
 
