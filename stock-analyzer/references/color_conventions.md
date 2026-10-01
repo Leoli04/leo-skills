@@ -130,7 +130,22 @@ plugins: [{
 }]
 ```
 
-### 3. 同一份报告内，情景数字只能有一套
+### 3. scriptable 选项的回调**禁止返回 `undefined`** —— 会在渲染帧抛 TypeError，图只剩轴没有数据
+
+Chart.js 的 scriptable option（`borderDash` / `backgroundColor` 等写成函数）**返回值就是最终值，不会回退到静态默认值**。回调返回 `undefined` 时，绘制阶段 `ctx.setLineDash(undefined)` 抛 `TypeError: Failed to execute 'setLineDash'`——该帧 datasets 绘制循环中断，**画面停留在「坐标轴 + 图例已画、数据没画」**，且每帧重绘都崩在同一位置，表现为永久性空图。
+
+```js
+// ✗ 错误：2026E 虚线段之后想用 undefined 表示「无虚线」
+borderDash: ctx => ctx.dataIndex >= 3 ? [6,4] : undefined
+
+// ✓ 正确：空数组 = 实线（setLineDash([]) 合法）
+borderDash: ctx => ctx.dataIndex >= 3 ? [6,4] : []
+```
+
+**排查特征**：轴和图例在、数据全无；DevTools console 有 `setLineDash` TypeError（注意 playwright 的 `pageerror` 能抓到，console.error 不一定）。
+**真实事故**：武商集团报告 ② 财务节 revenueChart 的归母 line dataset 用了 `: undefined`，用户看到「营收图无柱无线、旁边 marginChart 空白」。
+
+### 4. 同一份报告内，情景数字只能有一套
 
 期望价盒、胜率盒、胜率×赔率散点图**必须共用同一组三情景价格与概率**。
 
@@ -142,13 +157,13 @@ plugins: [{
 
 ⚠️ **不要拿 `methodology.md` 的演示案例数字当模板答案。** 方法论里那组（8.00/10.50/13.00 @ 现价 10.00）是**通用演示**，结论 30% 只对那组数字成立。模板示例是另一家公司（4.50/7.80/10.20 @ 现价 5.02），胜率 75%。**套错数字会把结论整个反过来。**
 
-### 4. 模板内容替换清单
+### 5. 模板内容替换清单
 
 模板以「分众传媒」为示例填充。复制后**必须整体替换**：公司名/代码、价格与市值、全部财务数字、护城河条目与分数、竞争对手名与对比表、新闻条目、风险条目、宏观数字、情景价格与概率、胜率与赔率、验证点与退出价位、综合评分、页脚日期。
 
 **交付前用 `grep -c "分众\|新潮"` 应返回 0**（示例公司名残留检查）。
 
-### 5. tab 切换的 div 配对 —— 错的不是「总数」，是「层级归属」
+### 6. tab 切换的 div 配对 —— 错的不是「总数」，是「层级归属」
 
 模板的 tab 机制是：
 

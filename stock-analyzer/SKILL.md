@@ -517,7 +517,7 @@ document.querySelectorAll('.nav-btn').forEach(b => {
 
 **判废信号**：任一 section `h=0`（内容存在但零高度 = 被嵌进了隐藏的兄弟节点）；或 `textLen` 明显偏大（吞了别的 section 的文本）。
 
-**真实事故**：③ 结尾一个多余的 `</div>` 关掉了 `.content`，导致 ⑦–⑪ 五个 section 被嵌进 `#valuation` 内部，用户看到「⑦ 到 ⑪ 没有任何数据」。当时 div 总数显示 607/607 平衡，**检查全绿但页面是坏的**。详见 `references/color_conventions.md` §5。
+**真实事故**：③ 结尾一个多余的 `</div>` 关掉了 `.content`，导致 ⑦–⑪ 五个 section 被嵌进 `#valuation` 内部，用户看到「⑦ 到 ⑪ 没有任何数据」。当时 div 总数显示 607/607 平衡，**检查全绿但页面是坏的**。详见 `references/color_conventions.md` §6。
 
 用 `present_files` 交付 HTML 报告。
 
