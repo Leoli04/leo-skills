@@ -23,9 +23,9 @@ import sys
 # 这里只作兜底默认值：若解析失败（文件缺失或格式异常）才使用。
 # 未传 --skill-dir 时，自动回退到本脚本所在 skill 目录的 redlines.md，
 # 避免「忘了传参数 → 静默用旧值 → 校验假通过」。
-EXPECT_REDLINES = 58      # 红线条数（兜底）
-EXPECT_TRAPS = 45         # 陷阱个数（兜底）
-EXPECT_SELFCHECK = 66     # 自检项数（兜底）
+EXPECT_REDLINES = 60      # 红线条数（兜底）
+EXPECT_TRAPS = 49         # 陷阱个数（兜底）
+EXPECT_SELFCHECK = 67     # 自检项数（兜底；= 报告实际采用数，可少于 redlines.md 的素材条数）
 
 
 def _resolve_skill_dir(explicit_dir):
