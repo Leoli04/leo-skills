@@ -19,11 +19,45 @@ import re
 import sys
 
 # ---------------------------------------------------------------- 计数基准
-# 这三组数字必须与 references/redlines.md 的标题保持一致。
-# 若你改了 redlines.md 的条目数，同步改这里。
-EXPECT_REDLINES = 50      # 红线条数
-EXPECT_TRAPS = 34         # 陷阱个数
-EXPECT_SELFCHECK = 48     # 自检项数
+# 这三组数字由 references/redlines.md 的「故为 X / Y / Z」行自动解析得到。
+# 这里只作兜底默认值：若解析失败（文件缺失或格式异常）才使用。
+# 未传 --skill-dir 时，自动回退到本脚本所在 skill 目录的 redlines.md，
+# 避免「忘了传参数 → 静默用旧值 → 校验假通过」。
+EXPECT_REDLINES = 58      # 红线条数（兜底）
+EXPECT_TRAPS = 45         # 陷阱个数（兜底）
+EXPECT_SELFCHECK = 66     # 自检项数（兜底）
+
+
+def _resolve_skill_dir(explicit_dir):
+    """确定 skill 目录：优先 --skill-dir，否则回退到脚本自身的上级目录。"""
+    if explicit_dir and os.path.exists(os.path.join(explicit_dir, "references", "redlines.md")):
+        return explicit_dir
+    # 脚本位于 <skill>/assets/verify_report.py → skill 目录是上一级
+    guess = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if os.path.exists(os.path.join(guess, "references", "redlines.md")):
+        return guess
+    return explicit_dir
+
+
+def _load_counts(skill_dir):
+    """从 redlines.md 解析基准计数，返回 (redlines, traps, selfcheck)。"""
+    global EXPECT_REDLINES, EXPECT_TRAPS, EXPECT_SELFCHECK
+    rl = os.path.join(skill_dir, "references", "redlines.md")
+    if not os.path.exists(rl):
+        return
+    t = open(rl, encoding="utf-8").read()
+    m = re.search(r"故为\s*(\d+)\s*/\s*(\d+)\s*/\s*(\d+)", t)
+    if m:
+        EXPECT_REDLINES = int(m.group(1))
+        EXPECT_TRAPS = int(m.group(2))
+        EXPECT_SELFCHECK = int(m.group(3))
+        return
+    m = re.search(r"红线速查（(\d+)\s*条）", t)
+    if m:
+        EXPECT_REDLINES = int(m.group(1))
+    m = re.search(r"陷阱对照（(\d+)\s*个?）", t)
+    if m:
+        EXPECT_TRAPS = int(m.group(1))
 
 # 阈值口径（与 methodology.md 保持一致，改了要同步）
 WACC = 0.12               # 折现率
@@ -277,16 +311,22 @@ def check_duplicate_numbers(html):
 
 def check_placeholders(html, is_template=False):
     """不得残留占位符 / 加载中 / TODO。"""
+    # 剥离 <script>...</script> 内容后再查：内联库（如 Chart.js 压缩源码）会含 {{ }} 等
+    # 与占位符无关的字符，若一并统计会误报。
+    body = re.sub(r"<script\b[^>]*>.*?</script>", "", html, flags=re.S | re.I)
     bad = []
-    pats = ["加载中...", "TODO", "待补充", "XXXX", "占位"]
+    # 「占位」在中文行文里常作正常词汇（如「不以示意点占位」），只在疑似占位符语境才计；
+    # 因此改用更具体的模式，避免误伤自然语言。
+    pats = ["加载中...", "TODO", "待补充", "XXXX", "占位符", "占位文本"]
     if not is_template:
         # 模板文件本身以 {{VAR}} 为设计占位符，检查时豁免
         pats.append("{{")
     for pat in pats:
-        n = html.count(pat)
+        n = body.count(pat)
         if n:
             bad.append(f"{pat}×{n}")
     # canvas 内的「加载中...」是模板常态（JS 会替换），单独降级为 WARN
+    # 注：canvas 文案在 <canvas> 标签内，不被 script 剥离影响
     if bad:
         only_canvas = all("加载中" in b for b in bad)
         add("WARN" if only_canvas else "FAIL", "残留占位符",
@@ -306,11 +346,51 @@ def check_sourced(html):
 
 
 def check_cdn(html):
-    """自包含性提示。"""
-    if "cdnjs" in html or "cdn." in html or "unpkg" in html:
-        add("WARN", "自包含性", "引用外部 CDN（Chart.js），离线环境需内联")
+    """自包含性：报告须为离线单文件，禁止外部 CDN 引用（硬约束）。"""
+    ext = [p for p in ["cdnjs", "cdn.", "unpkg", "jsdelivr",
+                       "https://cdn", "http://cdn"] if p in html]
+    # 只统计真正的 script/link 外链（排除注释与字符串里的偶然命中）
+    ext_links = re.findall(r'<(?:script|link)[^>]+(?:src|href)\s*=\s*["\'](https?://[^"\']+)', html)
+    if ext_links:
+        add("FAIL", "自包含性", f"存在外部资源引用（{len(ext_links)} 处）：{ext_links[0][:60]} —— 须内联")
+    elif ext:
+        add("FAIL", "自包含性", f"检出 CDN 关键字 {ext} —— 须内联，报告必须是离线单文件")
     else:
-        add("PASS", "自包含性", "无外部依赖")
+        # 进一步确认 Chart.js 已内联
+        inlined = ("Chart.js" in html) and ("new Chart(" in html)
+        add("PASS", "自包含性", "无外部依赖（Chart.js 已内联）" if inlined else "无外部依赖")
+
+
+# 允许「用到但未在 <style> 定义」的类（它们靠内联 style 或语义本身即可）
+CSS_UNDEF_OK = {"footer", "chart-wrap", "section", "card", "grid-2", "grid-3"}
+
+
+def check_css_classes(html):
+    """CSS 类完整性：HTML 里用到的 class 必须在 <style> 中有定义。
+
+    真实事故：⑥ 节财务健康卡用 .health-item/.hi-head/.health-bar/.health-fill/.hi-note，
+    但 <style> 只定义了 .health-card/.hc-*（模板旧样式），5 个类全部未定义 ——
+    卡片无边框底色、进度条 height:0 不显示，浏览器里是一堆裸文字，脚本此前完全抓不到。
+
+    已知豁免（CSS_UNDEF_OK）：靠内联 style 表达或纯语义占位的类。
+    """
+    styles = re.findall(r"<style\b[^>]*>(.*?)</style>", html, flags=re.S | re.I)
+    css = "\n".join(styles)
+    defined = set(re.findall(r"\.([A-Za-z_][\w-]*)", css))
+
+    # 收集 HTML 中出现的 class（排除 script 内的字符串）
+    body = re.sub(r"<script\b[^>]*>.*?</script>", "", html, flags=re.S | re.I)
+    used = set()
+    for m in re.finditer(r'class\s*=\s*["\']([^"\']+)["\']', body, flags=re.I):
+        for c in m.group(1).split():
+            used.add(c)
+
+    undef = sorted(c for c in used if c not in defined and c not in CSS_UNDEF_OK)
+    if undef:
+        add("FAIL", "CSS 类完整性",
+            f"{len(undef)} 个类用到但未定义：{', '.join('.' + c for c in undef)} —— 元素会渲染成裸样式，须补 CSS 或改类名")
+    else:
+        add("PASS", "CSS 类完整性", f"用到 {len(used)} 个类全部有定义")
 
 
 # ---------------------------------------------------------------- 主流程
@@ -325,25 +405,8 @@ def main():
         return 1
     html = open(args.report, encoding="utf-8").read()
 
-    global EXPECT_REDLINES, EXPECT_TRAPS, EXPECT_SELFCHECK
-    if args.skill_dir:
-        rl = os.path.join(args.skill_dir, "references", "redlines.md")
-        if os.path.exists(rl):
-            t = open(rl, encoding="utf-8").read()
-            # 优先读标题行「## 一 · 红线速查（43 条）」与「故为 43 / 26 / 35」，
-            # 避开第 3 行来源说明里的「文档正文 41 条红线」。
-            m = re.search(r"故为\s*(\d+)\s*/\s*(\d+)\s*/\s*(\d+)", t)
-            if m:
-                EXPECT_REDLINES = int(m.group(1))
-                EXPECT_TRAPS = int(m.group(2))
-                EXPECT_SELFCHECK = int(m.group(3))
-            else:
-                m = re.search(r"红线速查（(\d+)\s*条）", t)
-                if m:
-                    EXPECT_REDLINES = int(m.group(1))
-                m = re.search(r"陷阱对照（(\d+)\s*个?）", t)
-                if m:
-                    EXPECT_TRAPS = int(m.group(1))
+    # 解析基准计数：显式 --skill-dir 优先，否则回退到脚本自身所在的 skill 目录
+    _load_counts(_resolve_skill_dir(args.skill_dir))
 
     print(f"回查报告：{args.report}")
     print(f"基准计数：红线 {EXPECT_REDLINES} / 陷阱 {EXPECT_TRAPS} / 自检 {EXPECT_SELFCHECK}")
@@ -359,6 +422,7 @@ def main():
     check_placeholders(html, is_template=is_tpl)
     check_sourced(html)
     check_cdn(html)
+    check_css_classes(html)
 
     fails = warns = 0
     for lvl, item, detail in results:
@@ -377,7 +441,7 @@ def main():
     if fails:
         print("\n✗ 存在 FAIL，逐项修正后重跑；机器验不了的口径与逻辑仍需人工读。")
     else:
-        print("\n✓ 机器可验项全部通过。仍需人工确认：Phase 9.5 第二遍 10 条（见 SKILL.md）。")
+        print("\n✓ 机器可验项全部通过。仍需人工确认：Phase 9.5 第二遍 11 条（见 SKILL.md）。")
     return 1 if fails else 0
 
 
