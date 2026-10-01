@@ -394,6 +394,164 @@ def check_css_classes(html):
 
 
 # ---------------------------------------------------------------- 主流程
+def check_section_depth(html, skill_dir, report_path):
+    """逐节内容量对照 examples/ 范例，任一节 < 范例同节 70% 即 FAIL。
+
+    专治「内容偏薄」：结构配平、数字自洽都通过，但整节只有几行 —— 22 项全绿却一眼看出单薄。
+    注意：问的是「块数与篇幅」，不是「数据要一样」；范例的标的特有数据不可移植。
+    """
+    if not skill_dir:
+        return
+    ref = os.path.join(skill_dir, "examples", "小商品城_600415_完整范例.html")
+    if not os.path.exists(ref):
+        add("WARN", "章节密度对照", f"未找到范例 {ref}，跳过")
+        return
+
+    def sec_map(text):
+        ms = list(re.finditer(r'<div class="section(?:"|\s+active")[^>]*id="([^"]+)"', text))
+        d = {}
+        for i, m in enumerate(ms):
+            end = ms[i + 1].start() if i + 1 < len(ms) else len(text)
+            d[m.group(1)] = len(text[m.start():end])
+        return d
+
+    cur = sec_map(html)
+    base = sec_map(open(ref, encoding="utf-8").read())
+    if not base:
+        add("WARN", "章节密度对照", "范例未解析出 section，跳过")
+        return
+
+    thin = []
+    rows = []
+    for k, b in base.items():
+        a = cur.get(k, 0)
+        ratio = a / b * 100 if b else 100
+        rows.append(f"{k} {ratio:.0f}%")
+        # 阈值 60%：结构缺口（原事故为 14%-40%）会被抓到；
+        # 65%-70% 通常是「块数已够、只是行文更精炼」，不应误判。
+        if a < b * 0.6:
+            thin.append(f"{k}({ratio:.0f}%)")
+
+    if thin:
+        add("FAIL", "章节密度对照", "偏薄(<范例60%): " + ", ".join(thin) + " | " + " ".join(rows))
+    else:
+        add("PASS", "章节密度对照", " ".join(rows))
+
+
+def check_named_components(html, skill_dir, report_path):
+    """逐节比对 SKILL.md 第 1–11 条里「加粗具名组件」是否真的存在。
+
+    与 check_section_depth 的分工：那个查「够不够厚」（字数），这个查「该有的块有没有」（结构）。
+    字数可被「多写三段废话」凑满，具名组件不能 —— 所以两层都要。
+    """
+    if not skill_dir:
+        return
+    skill_md = os.path.join(skill_dir, "SKILL.md")
+    if not os.path.exists(skill_md):
+        add("WARN", "具名组件完整性", f"未找到 {skill_md}，跳过")
+        return
+
+    # 从 SKILL.md 的 1.–11. 条目里解析 **加粗** 组件名（含全角逗号分隔的并列项）
+    text = open(skill_md, encoding="utf-8").read()
+    m = re.search(r"^1\. \*\*公司概况\*\*.*?(?=^\*\*自检清单四态语义\*\*)", text, re.S | re.M)
+    if not m:
+        add("WARN", "具名组件完整性", "SKILL.md 未解析到 1–11 条，跳过")
+        return
+    block = m.group(0)
+
+    REQUIRED = {}   # section_id -> [(显示名, [特征串...])]
+    order = []
+    for line in block.splitlines():
+        if not line.strip():
+            continue
+        head = re.match(r"^(\d+)\. \*\*(.+?)\*\*", line.strip())
+        if head:
+            order.append((int(head.group(1)), head.group(2).strip()))
+    if len(order) != 11:
+        add("WARN", "具名组件完整性", f"SKILL.md 只解析到 {len(order)} 条主条目，跳过")
+        return
+
+    # section id 与 ①②③… 的顺序一一对应（模板固定）
+    ids = ["overview", "financial", "technical", "sentiment", "competition",
+           "valuation", "macro", "risk", "exit", "conclusion", "checklist"]
+
+    # 组件特征串表：键 = 组件显示名，值 = 命中文档即视为存在的多个候选串（任一命中即可）
+    SIG = {
+        "估值锚定位卡": ["估值锚", "锚定位"],
+        "营收结构 vs 利润结构合并对比图": ["structCompareChart", "结构对比", "利润结构"],
+        "四条线单季环比拆解表": ["单季环比", "环比拆解", "四条线单季"],
+        "股息可持续性测算": ["股息可持续", "派息总额", "分红.*钱从哪来", "股息可持续性测算"],
+        "有效阻力识别卡": ["有效阻力"],
+        "卖方目标价三面检验拆解卡": ["三面检验", "折现后可比价", "卖方目标价.*个.*问题", "折现后的卖方目标价"],
+        "资金进出趋势": ["资金进出", "净额汇总", "主力.*北向"],
+        "信息密度与股价滞涨的派发判别": ["派发判别", "信息密度"],
+        "行业景气定位卡": ["行业景气定位"],
+        "同业营收同比对照表": ["同业营收同比", "营收同比对照"],
+        "PE/PB 双窗口分位表": ["双窗口分位", "分位表", "分位"],
+        "估值分位四象限图": ["valuationQuadrant", "四象限"],
+        "三情景概率加权卡": ["三情景", "概率加权"],
+        "当前买入胜率与胜率×赔率定位图": ["胜率.*赔率", "赔率定位"],
+        "财务健康仪表盘": ["财务健康仪表盘", "财务健康度评估", "财务健康"],
+        "宏观传导矩阵": ["宏观传导矩阵", "传导矩阵"],
+        "传导链到利润表的落点": ["传导链", "利润表落点", "财务费用率"],
+        "身份错配审查": ["身份错配", "风险究竟落在谁头上"],
+        "当前买入胜率结论卡": ["买入胜率结论", "胜率结论"],
+        "综合评分矩阵": ["综合评分矩阵"],
+    }
+
+    # 组件归属：按 SKILL.md 第 N 条落在哪个 section
+    OWNER = {
+        "估值锚定位卡": "overview",
+        "营收结构 vs 利润结构合并对比图": "overview",
+        "四条线单季环比拆解表": "financial",
+        "股息可持续性测算": "financial",
+        "有效阻力识别卡": "technical",
+        "卖方目标价三面检验拆解卡": "sentiment",
+        "资金进出趋势": "sentiment",
+        "信息密度与股价滞涨的派发判别": "sentiment",
+        "行业景气定位卡": "competition",
+        "同业营收同比对照表": "competition",
+        "PE/PB 双窗口分位表": "valuation",
+        "估值分位四象限图": "valuation",
+        "三情景概率加权卡": "valuation",
+        "当前买入胜率与胜率×赔率定位图": "valuation",
+        "财务健康仪表盘": "valuation",
+        "宏观传导矩阵": "macro",
+        "传导链到利润表的落点": "macro",
+        "身份错配审查": "macro",
+        "当前买入胜率结论卡": "conclusion",
+        "综合评分矩阵": "conclusion",
+    }
+
+    # 抓各 section 的正文
+    def sec_body(text):
+        ms = list(re.finditer(r'<div class="section(?:"|\s+active")[^>]*id="([^"]+)"', text))
+        d = {}
+        for i, mm in enumerate(ms):
+            end = ms[i + 1].start() if i + 1 < len(ms) else len(text)
+            d[mm.group(1)] = text[mm.start():end]
+        return d
+
+    bodies = sec_body(html)
+    missing = []
+    for name, pats in SIG.items():
+        sid = OWNER.get(name)
+        if not sid:
+            continue
+        body = bodies.get(sid, "")
+        if not body:
+            missing.append(f"{name}(整节缺失)")
+            continue
+        if not any(re.search(p, body) for p in pats):
+            missing.append(f"{name}@{sid}")
+
+    if missing:
+        add("FAIL", "具名组件完整性",
+            f"{len(missing)}/{len(SIG)} 个组件未检出：" + "、".join(missing))
+    else:
+        add("PASS", "具名组件完整性", f"{len(SIG)} 个具名组件全部命中")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Stock Analyzer 报告内容回查")
     ap.add_argument("report", help="报告 HTML 路径")
@@ -423,6 +581,8 @@ def main():
     check_sourced(html)
     check_cdn(html)
     check_css_classes(html)
+    check_section_depth(html, _resolve_skill_dir(args.skill_dir), args.report)
+    check_named_components(html, _resolve_skill_dir(args.skill_dir), args.report)
 
     fails = warns = 0
     for lvl, item, detail in results:
