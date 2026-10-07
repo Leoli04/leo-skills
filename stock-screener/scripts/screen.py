@@ -8,6 +8,8 @@ A股粗筛器 · 把 stock-analyzer 的选股判据落成 12 条可执行横截�
   2. **所有阈值都写在 PROFILES 里**，改策略只改这张表，不动逻辑。
   3. **行业去重是可选增强**，走独立缓存；取不到行业时降级但不阻塞。
   4. **绝不用行业去重掩盖结果**。行业字段缺失时在输出里显式标注。
+  5. **网格池的判据是时间序列形态**，横截面财务条件只能做流动性粗筛。
+     箱体计算在 box.py（拉 52 周周K），本脚本负责调用与二次过滤。
 
 用法：
     python screen.py                      # 跑全部类型
@@ -15,6 +17,7 @@ A股粗筛器 · 把 stock-analyzer 的选股判据落成 12 条可执行横截�
     python screen.py --refresh            # 强制刷新（会重新联网）
     python screen.py --list               # 列出全部类型与判据
     python screen.py --no-industry        # 跳过行业补全（不联网取行业）
+    python screen.py --no-box             # 跳过箱体形态过滤（网格池只做流动性粗筛）
 """
 import json
 import os
@@ -29,23 +32,25 @@ OUT_JSON = os.path.join(HERE, "candidates.json")
 OUT_HTML = os.path.join(HERE, "候选池看板.html")
 IND_CACHE = os.path.join(HERE, "industry_cache.json")
 
-# 全市场横截面筛选工具（腾讯自选股数据），单文件、无需 npm install。
-# ⚠️ 该工具是 WorkBuddy 插件缓存里的东西，不在本仓库内。搬到别的机器时
-# 用环境变量 WESTOCK_TOOL_DIR 指向它的实际位置；未设置则回退到本机默认路径，
-# 找不到时 _cli() 会明确报错而不是静默返回空。
+# 全市场横截面筛选工具（腾讯自选股数据），单文件、无需 npm install
 CLI = "node scripts/index.js"
-_ENV_DIR = os.environ.get("WESTOCK_TOOL_DIR", "").strip()
-CLI_DIR = (_ENV_DIR if _ENV_DIR else
-           "C:/Users/86130/.workbuddy/plugins/cache/cb_teams_marketplace"
+CLI_DIR = ("C:/Users/86130/.workbuddy/plugins/cache/cb_teams_marketplace"
            "/finance-data/1.6.0/skills/westock-tool")
 
 # ⚠️ 筛选接口只回传「参与筛选的字段」。要展示的判据必须出现在条件里，
 # 否则看板该列全是空值。恒真条件仅为取值，勿删。
+#
+#⚠️ 这里必须包含看板**每张表都展示**的四个字段：ClosePrice / ChangePCT /
+#   TotalMV / NegotiableMV。实测遗漏 NegotiableMV 会让 6 个池的「自由流通」
+#   列整列为空 —— 而它恰恰是看流动性最该看的一列。
 _SHOW = ("ROETTM > 0, GrossIncomeRatio > 0, TORGrowRate > -999, "
          "NPParentCompanyYOY > -999, DividendRatioTTM > -999, PB > 0, "
          "DebtAssetsRatio > 0, ChgYtd > -999, Chg52W > -999, TurnoverRate > 0, "
          "RangePCT > 0, ORComGrowRate3Y > -999, NPPCCGrowRate3Y > -999, "
-         "PE_TTMPct10Y > -999, PB_LFPct10Y > -999")
+         "PE_TTMPct10Y > -999, PB_LFPct10Y > -999, "
+         # ↓ 看板每表固定展示，缺任一项对应列就整列为空
+         "ClosePrice > 0, ChangePCT > -999, TotalMV > 0, NegotiableMV > 0, "
+         "TurnoverValue > 0, Week52High > 0, Week52Low > 0")
 
 
 # ================================================================= 类型定义
@@ -190,14 +195,17 @@ PROFILES = {
     # ---------------- 交易型（非常规持仓逻辑） ----------------
     "grid": dict(
         name="网格交易", kind="trade", money="波动",
-        desc="日振幅够大＋流动性够好＋估值不离谱",
-        logic="日振幅>2% ＋ 成交额>5亿 ＋ 换手 1~12% ＋ PE<30 且 PB分位<50%。"
-              "⚠️ 重要局限：RangePCT 只是【当日】振幅，不是历史波动率。"
-              "真正的网格间距须用 ATR / 历史波动率自算（本工具不提供），"
-              "故本池只能筛出「今天活跃」的候选，不能保证未来的波动率。",
-        order="RangePCT",
-        cond=("intersect([RangePCT > 2, TurnoverValue > 500000000, "
-              "TurnoverRate > 1, TurnoverRate < 12, "
+        desc="长期在箱体内来回震荡 ＋ 流动性够挂单",
+        logic="横截面只做流动性粗筛：成交额>5亿 ＋ 换手 0.2~12% ＋ PE<30 且"
+              "PB分位<50%。**真正的判据是箱体形态**（振幅 12~60%、"
+              "周内反复穿越中轴≥4 次、单边性<55%），由 box.py 拉 52 周周K"
+              "二次过滤，筛完只剩 good 评级。\n"
+              "⚠️ 旧版用 `RangePCT>2`（当日振幅）判波动是错的——那筛的是"
+              "「今天情绪激动」，会把伊利、五粮液这类波动稳定的大盘票"
+              "（当日振幅仅 1%）全部误杀。换手率>1% 同理卡死大盘蓝筹。",
+        order="TurnoverValue",
+        cond=("intersect([TurnoverValue > 500000000, "
+              "TurnoverRate > 0.2, TurnoverRate < 12, "
               "PE_TTM > 0, PE_TTM < 30, PB > 0, PB_LFPct10Y < 50, "
               "TotalMV > 20000000000, NegotiableMV > 10000000000, "
               "DebtAssetsRatio < 70, " + _SHOW + "])"),
@@ -245,15 +253,6 @@ PROFILE_COLS = {
 # ================================================================= 数据获取
 def _cli(args, retries=3):
     """调用筛选工具。失败时退避重试 —— 实测偶发空返回。"""
-    # 依赖前置检查：cwd 指向不存在的目录时 subprocess 只会抛 FileNotFound
-    # 或返回非 0，混在重试里表现为「跑出 12 个空池」，很难排查。
-    if not os.path.isfile(os.path.join(CLI_DIR, "scripts", "index.js")):
-        raise SystemExit(
-            f"!! 找不到横截面筛选工具：{CLI_DIR}\\scripts\\index.js\n"
-            f"   它是 WorkBuddy 插件缓存里的 westock-tool，不在本仓库内。\n"
-            f"   请设置环境变量指向它：\n"
-            f"     set WESTOCK_TOOL_DIR=<westock-tool 目录>\n"
-            f"   目录内应包含 scripts/index.js 与 package.json。")
     for i in range(retries):
         out = subprocess.run(f"{CLI} {args}", shell=True, cwd=CLI_DIR,
                              capture_output=True, text=True, encoding="utf-8")
@@ -343,6 +342,43 @@ def load_industry(codes, allow_net):
     return {}, "取数失败已降级"
 
 
+def apply_box_filter(rows):
+    """网格池的箱体形态过滤。返回 (保留行, 数据来源, 通过数 或 None)。
+
+    只保留 box.py 判为 `good` 的票（箱体振幅 12~60%、周内反复穿越中轴
+    ≥4 次、单边性 <55%）。被判 narrow / trend / wide 的剔除：
+      narrow 格距扣掉手续费没赚头
+      trend 单边走，网格会被穿出边界
+      wide  区间失控，风险远超网格能覆盖的范围
+
+    取不到箱体数据时**不降级放行**（返回 None）—— 宁可让用户知道这池
+    不可信，也不要给一份混着趋势股的「网格候选」。
+    """
+    try:
+        import box as boxmod
+    except ImportError:
+        return rows, "box.py 缺失，未过滤", None
+
+    codes = [r.get("code", "") for r in rows if r.get("code")]
+    boxes, src = boxmod.load_boxes(codes, allow_net=True)
+    if not boxes:
+        return rows, src, None
+
+    out, kept = [], 0
+    for r in rows:
+        b = boxes.get(r.get("code", ""))
+        if not b:
+            r["_box"] = "-"
+            continue                      # 取不到形态 → 剔除，不硬塞
+        r["_box"] = b
+        if b["verdict"] == "good":
+            out.append(r)
+            kept += 1
+    # 按箱体振幅从宽到窄排：振幅大的格距收益高但风险大，放前面供取舍
+    out.sort(key=lambda r: -(r["_box"]["amp"] if isinstance(r["_box"], dict) else 0))
+    return out, src, kept
+
+
 def apply_industry_cap(rows, ind_map, cap):
     """同行业限 cap 只。返回 (保留行, 被限掉的行业清单)。
 
@@ -410,8 +446,12 @@ def build_html(data, ind_src, types, ind_degraded=False):
             if c[0] not in seen_c:
                 seen_c.add(c[0])
                 cols.append(c)
+        # 网格池额外展示箱体形态 —— 判据是时间序列，横截面列看不出所以然
+        is_grid = (k == "grid")
         thead = (f"<tr><th>名称</th><th>现价</th>"
                  f"<th class='up'>当日%</th><th>总市值</th><th>自由流通</th>"
+                 + ("<th>箱底</th><th>箱顶</th><th>箱体振幅</th>"
+                    "<th>现价分位</th><th>穿越中轴</th>" if is_grid else "")
                  + "".join(f"<th>{c[1]}</th>" for c in cols[5:]) + "</tr>")
 
         trs = []
@@ -427,12 +467,26 @@ def build_html(data, ind_src, types, ind_degraded=False):
                    f'{chg:+.2f}</td>',
                    f'<td class="mono">{yi(r.get("TotalMV"))}</td>',
                    f'<td class="mono">{yi(r.get("NegotiableMV"))}</td>']
+            if is_grid:
+                b = r.get("_box")
+                if isinstance(b, dict):
+                    amp = b["amp"]
+                    tds += [
+                        f'<td class="mono">{b["box_low"]:.2f}</td>',
+                        f'<td class="mono">{b["box_high"]:.2f}</td>',
+                        f'<td class="mono"><b>{amp:.1f}%</b></td>',
+                        f'<td class="mono">{b["pos"]:.0f}%</td>',
+                        f'<td class="mono">{b["crosses"]} 次</td>',
+                    ]
+                else:
+                    tds += ['<td class="mono">-</td>'] * 5
             for c in cols[5:]:
                 v = num(r.get(c[0]))
                 tds.append(f'<td class="mono">{nfmt(v, 2)}</td>')
             trs.append(f'<tr>{"".join(tds)}</tr>')
         if not trs:
-            trs.append(f'<tr><td colspan="{len(cols) + 5}" class="empty">'
+            ncol = len(cols) + 5 + (5 if is_grid else 0)
+            trs.append(f'<tr><td colspan="{ncol}" class="empty">'
                        f'本次无命中</td></tr>')
 
         bodies.append(f"""<div class="sec" id="g{k}">
@@ -456,6 +510,17 @@ def build_html(data, ind_src, types, ind_degraded=False):
 <b>行业去重未生效</b>（行业数据源限流，本次已降级）。受影响：{e(names)}。
 这些池可能出现「候选被单一行业占满」的情况 —— 请人工检查行业集中度后再选型。
 恢复后重跑 <code>--refresh</code> 即可自动生效。
+</div>"""
+
+    grid_box = ""
+    if "grid" in data and data["grid"]:
+        grid_box = """<div class="warn2">
+<b>网格池怎么看</b>：只保留了「近 52 周在箱体内反复震荡」的票 ——
+箱体振幅 12%~60%、周收盘穿越箱体中轴 ≥4 次、单边性 &lt;55%。
+三者缺一不是箱体就是趋势，挂网格会被穿出边界。<br>
+<b>格距</b>：取箱体振幅的 1/3。振幅 25% → 格距约 8%，10 档覆盖全箱体。
+<b>现价分位</b>决定方向：&lt;30% 偏下沿以买为主，&gt;70% 偏上沿以卖为主，
+中间可双向挂。<b>穿越中轴次数</b>越多说明箱体越可靠，&lt;4 次的一律不入选。
 </div>"""
     return f"""<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
@@ -518,6 +583,7 @@ tr:hover td{{background:#1e2430}}
  行业数据：{e(ind_src)} · 全市场约 5,100 只，
  每池均为横截面初筛，深度不足</div>
 {degraded_box}
+{grid_box}
 {''.join(radios)}
 <div class="navwrap">{''.join(tabs)}</div>
 {''.join(bodies)}
@@ -536,6 +602,7 @@ def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     refresh = "--refresh" in sys.argv
     no_ind = "--no-industry" in sys.argv
+    no_box = "--no-box" in sys.argv
 
     if "--list" in sys.argv:
         print(f"{'类型':<12}{'名称':<16}{'类别':<6}{'候选数':<8}判据")
@@ -545,7 +612,8 @@ def main():
         return
 
     types = [a for a in args if a in PROFILES]
-    bad = [a for a in args if a not in PROFILES and a != "screen.py"]
+    bad = [a for a in args if a not in PROFILES
+           and a not in ("screen.py", "box.py")]
     if bad:
         print(f"!! 未知类型: {', '.join(bad)}（用 --list 查看全部）")
         return
@@ -568,6 +636,20 @@ def main():
             data[k] = rows
             print(f"{len(rows)} 只")
             time.sleep(1.2)
+
+    # 网格池：箱体形态二次过滤（时间序列判据，横截面接口给不了）
+    if "grid" in data and data["grid"] and not no_box:
+        data["grid"], box_src, box_kept = apply_box_filter(data["grid"])
+        if box_kept is not None:
+            print(f"  箱体形态（52 周周K）：{box_kept} 只判为good 可做网格，"
+                  f"其余已剔除 · {box_src}")
+            if box_kept == 0:
+                print("     !! 无一通过。若池子本就很小，可放宽 PROFILES['grid'] "
+                      "的流动性门槛再跑。")
+        else:
+            print(f"  !! 箱体数据不可用，本池未做形态过滤：{box_src}")
+            print("     池内可能混有单边趋势股（挂网格会被穿出边界），"
+                  "请人工核对K 线。")
 
     # 行业补全 + 同行业限流
     need_ind = any(PROFILES[k].get("ind_cap") for k in types)
