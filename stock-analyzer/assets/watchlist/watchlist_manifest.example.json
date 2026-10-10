@@ -1,0 +1,26 @@
+{
+ "note": "观察池台账配置。复制本文件为 watchlist_manifest.json 后填写。每只标的取最新一版报告；新报告产出后更新 file/report_date/lib_url。overrides 仅填自动抽取不到或有误的字段（必须已核对报告原文）。",
+ "space": {
+  "space_id": "<资料库 spaceId>",
+  "parent_id": "<台账所在父节点 ID>",
+  "parent_name": "投资",
+  "report_folder_id": "<个股报告文件夹节点 ID>",
+  "report_folder_name": "个股报告",
+  "archive_folder_id": "<旧版归档文件夹节点 ID>",
+  "archive_folder_name": "旧版归档"
+ },
+ "placement": "个股报告类节点统一放在「个股报告」文件夹（report_folder_id）内；「投资」根目录只留组合配置方案 / 标的筛选与检验 / 行业入门 / 多标的对比 / 方法论 / 候选池看板 / 观察池台账 与两个文件夹。新报告导入时 --parent-id 用 report_folder_id。",
+ "fresh_from": "2026-01-01",
+ "report_root": "<报告工作目录的绝对路径，如 D:/stock>",
+ "reports": [
+  {
+   "code": "600000",
+   "name": "示例标的",
+   "cat": "A",
+   "file": "示例标的(600000)_投资分析报告_2026-01-01.html",
+   "report_date": "2026-01-01",
+   "lib_url": "https://<资料库域名>/space/d/<节点 ID>",
+   "overrides": {}
+  }
+ ]
+}

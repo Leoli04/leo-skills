@@ -70,3 +70,7 @@ AGENTS.md
 
 # YouTube 下载工作目录
 freelancers/
+
+# stock-analyzer 观察池个人数据（含个人标的清单与资料库节点 ID，不进仓库）
+# 配置格式模板见 stock-analyzer/assets/watchlist/watchlist_manifest.example.json
+watchlist_manifest.json

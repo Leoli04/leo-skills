@@ -27,6 +27,33 @@ EXPECT_REDLINES = 60      # 红线条数（兜底）
 EXPECT_TRAPS = 49         # 陷阱个数（兜底）
 EXPECT_SELFCHECK = 67     # 自检项数（兜底；= 报告实际采用数，可少于 redlines.md 的素材条数）
 
+# ---------------------------------------------------------------- 报告命名规范
+# 标准名：<标的简称>(<代码>)_<报告类型>_<YYYY-MM-DD>.html
+#   例：中远海控(601919)_投资分析报告_2026-09-30.html
+#      泡泡玛特(09992.HK)_投资分析报告_2026-10-09.html   ← 港股带 .HK 后缀
+# 「名称(代码)」与「_YYYY-MM-DD」是硬段，中间的报告类型不限字（不得含 - _ / 空格）。
+NAME_STD_RE = re.compile(
+    r'^(?P<name>[^()（）\-_/\s]+)'
+    r'\((?P<code>\d{6}|\d{5}\.HK)\)_'
+    r'(?P<type>[^\-_/\s]+)_'
+    r'(?P<date>\d{4}-\d{2}-\d{2})$'
+)
+# 规范生效日：该日及以后产出的报告必须用标准名。
+# 2026-10-09 及以前产出的是本规范落地前的历史报告，降级为 WARN（不追溯）。
+NAME_RULE_SINCE = "2026-10-10"
+# 旧命名族（可解析出 标的 + 类型 + 日期）：名称-类型-20260930 / 名称_代码_类型_2026-09-30 /
+# 002130-analysis-2026-09-12 / 江阴银行002807_投资分析报告_2026-10-03
+NAME_LEGACY_RE = re.compile(
+    r'^(?P<name>.+?)[\-_](?P<type>[^\-_/\s]+?)[\-_](?P<date>\d{8}|\d{4}-\d{2}-\d{2})$'
+)
+# 旧命名族 · 无日期：宁德时代300750_基本面分析报告
+NAME_LEGACY_NODATE_RE = re.compile(
+    r'^(?P<name>.+?)[\-_](?P<type>投资分析报告|首次覆盖报告|基本面分析报告|个股测算|分析报告|持仓成本评估|净利率收敛空间测算)$'
+)
+# 非个股报告类产物（组合方案 / 筛选 / 看板 / 方法论 / 台账 / 范例…），命名规范不适用
+NAME_NON_STOCK_KW = ('台账', '看板', '组合', '配置', '筛选', '选股', '策略', '检验', '入门',
+                     '方法论', '清单', '扫描', '回测', '对比', '复盘', '框架', '范例', '示例', '模板')
+
 
 def _resolve_skill_dir(explicit_dir):
     """确定 skill 目录：优先 --skill-dir，否则回退到脚本自身的上级目录。"""
@@ -365,6 +392,96 @@ def check_cdn(html):
 CSS_UNDEF_OK = {"footer", "chart-wrap", "section", "card", "grid-2", "grid-3"}
 
 
+def check_report_file_name(report_path):
+    """报告文件名规范：<标的简称>(<代码>)_<报告类型>_<YYYY-MM-DD>.html
+
+    三问对照：① 对照 NAME_STD_RE；② 阈值见下面四档；③ 本函数输出 FAIL/WARN。
+
+    四档判定：
+      PASS  文件名符合标准格式
+      WARN  能识别为「旧命名族」且日期早于 NAME_RULE_SINCE（历史报告，不追溯），
+            或非个股报告类产物（命名规范不适用）
+      FAIL  日期 >= NAME_RULE_SINCE 却仍用旧命名（新报告用错格式）
+            或文件名既不符合标准格式、也识别不出标的与类型（无法归档与归并）
+    """
+    base = os.path.basename(report_path.replace("\\", "/"))
+    if "report_template" in base:                      # 模板本身不受此约束
+        add("PASS", "报告文件名规范", f"{base}（模板，不适用）")
+        return
+    stem = base[:-5] if base.lower().endswith(".html") else base
+
+    m = NAME_STD_RE.match(stem)
+    if m:
+        add("PASS", "报告文件名规范",
+            f"{m.group('name')}({m.group('code')}) · {m.group('type')} · {m.group('date')}")
+        return
+
+    def suggest(name_part, rtype, iso):
+        """由旧名尽量拼出合规名；代码位或名称位取不到时用 <?…> 标出，不猜值。"""
+        code = ""
+        raw = name_part or ""
+        mc = re.search(r'(?<!\d)(\d{6})(?!\d)', raw)
+        if mc:
+            code = mc.group(1)
+        else:
+            mc = re.search(r'(?<!\d)(\d{5})\s*\.?\s*HK', stem, re.I)
+            if mc:
+                code = mc.group(1) + ".HK"
+        nm = raw
+        if mc:
+            nm = re.sub(r'(?<!\d)' + re.escape(mc.group(0)) + r'(?!\d)', '', nm)
+            nm = re.sub(r'[\s\-_]*\.?\s*HK\s*$', '', nm, flags=re.I)
+        nm = re.sub(r'[（）()]', '', nm).strip(" -_")
+        return f"{nm or '<?名称>'}({code or '<?代码>'})_{rtype or '<?报告类型>'}_{iso or '<?YYYY-MM-DD>'}.html"
+
+    # 非个股报告类产物：命名规范不适用
+    if any(k in stem for k in NAME_NON_STOCK_KW):
+        add("WARN", "报告文件名规范", f"{base} —— 非个股报告类产物，本项不适用")
+        return
+
+    lm = NAME_LEGACY_RE.match(stem)
+    if lm:
+        d = lm.group("date")
+        iso = f"{d[:4]}-{d[4:6]}-{d[6:]}" if len(d) == 8 else d
+        sug = suggest(lm.group("name"), lm.group("type"), iso)
+        if iso >= NAME_RULE_SINCE:
+            add("FAIL", "报告文件名规范",
+                f"{base} —— 产出日 {iso} 在规范生效日（{NAME_RULE_SINCE}）之后，仍用旧命名；须改名为 {sug}")
+        else:
+            add("WARN", "报告文件名规范",
+                f"{base} —— 历史命名（{iso}，早于规范生效日），不追溯；如需统一可改名为 {sug}")
+        return
+
+    nm = NAME_LEGACY_NODATE_RE.match(stem)
+    if nm:
+        add("WARN", "报告文件名规范",
+            f"{base} —— 历史命名且无日期段，无法判定产出日，不追溯；"
+            f"新报告必须含 _YYYY-MM-DD 段")
+        return
+
+    # 已带「名称(代码)」但结构不全 —— 精确指出缺哪一段（新报告最常犯的两种错）
+    struct = re.match(r'^(?P<name>[^()（）\-_/\s]+)\((?P<code>\d{6}|\d{5}\.HK)\)(?P<rest>.*)$', stem)
+    if struct:
+        rest = struct.group("rest")
+        iso = ""
+        md = re.search(r'(\d{4}-\d{2}-\d{2})', rest)
+        if md:
+            iso = md.group(1)
+        if not md:
+            add("FAIL", "报告文件名规范",
+                f"{base} —— 缺日期段或日期格式不是 YYYY-MM-DD；"
+                f"须为 {struct.group('name')}({struct.group('code')})_<?报告类型>_YYYY-MM-DD.html")
+        else:
+            add("FAIL", "报告文件名规范",
+                f"{base} —— 缺「_报告类型_」段（代码与日期已合规）；"
+                f"须为 {struct.group('name')}({struct.group('code')})_报告类型_{iso}.html")
+        return
+
+    add("FAIL", "报告文件名规范",
+        f"{base} —— 既不符合「名称(代码)_报告类型_YYYY-MM-DD.html」，也识别不出标的与类型，"
+        f"无法被观察池台账归并；须重命名（示例：中远海控(601919)_投资分析报告_2026-09-30.html）")
+
+
 def check_css_classes(html):
     """CSS 类完整性：HTML 里用到的 class 必须在 <style> 中有定义。
 
@@ -494,7 +611,7 @@ def check_named_components(html, skill_dir, report_path):
         "财务健康仪表盘": ["财务健康仪表盘", "财务健康度评估", "财务健康"],
         "宏观传导矩阵": ["宏观传导矩阵", "传导矩阵"],
         "传导链到利润表的落点": ["传导链", "利润表落点", "财务费用率"],
-        "身份错配审查": ["身份错配", "风险究竟落在谁头上"],
+        "身份错配审查": ["身份错配", "风险究竟落在谁头上", "受益方核对", "受益方到底是谁"],
         "当前买入胜率结论卡": ["买入胜率结论", "胜率结论"],
         "综合评分矩阵": ["综合评分矩阵"],
     }
@@ -570,6 +687,7 @@ def main():
     print(f"基准计数：红线 {EXPECT_REDLINES} / 陷阱 {EXPECT_TRAPS} / 自检 {EXPECT_SELFCHECK}")
     print("=" * 62)
 
+    check_report_file_name(args.report)
     check_structure(html)
     check_struct_pairing(html)
     check_version(html)
