@@ -212,7 +212,7 @@ def row_html(r, idx):
            '' if r['gap'] is None else r['gap'],
            escape(r['search'], quote=True))
     )
-    fresh = ' is-fresh' if r.get('fresh') else ''
+    fresh = ' class="is-fresh"' if r.get('fresh') else ''
     chg = ''
     if r.get('chg'):
         chg = '<span class="chg" title="上期判定：%s">%s</span>' % (
