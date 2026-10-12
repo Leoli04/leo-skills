@@ -134,7 +134,7 @@ def enrich(r):
     r['zone'] = 'A' if r['pos'] else b
 
     r['target_v'] = _f(r.get('target'))
-    r['search'] = ' '.join(str(r.get(k, '')) for k in ('name', 'code', 'judge', 'obs'))
+    r['search'] = ' '.join(str(r.get(k, '')) for k in ('name', 'code', 'judge', 'obs', 'alert'))
     return r
 
 
@@ -219,13 +219,16 @@ def row_html(r, idx):
             escape(str(r.get('prev_judge') or '')), escape(r['chg']))
     judge_note = escape(r.get('judge') or '')[:46]
     cut = '…' if len(r.get('judge') or '') > 46 else ''
+    al_txt = str(r.get('alert') or '').strip()
+    al_html = ('<span class="al" title="%s">行情更新</span>'
+               % escape(al_txt, quote=True)) if al_txt else ''
     op = r.get('op') or ''
     op_attr = ' title="%s"' % escape(op, quote=True) if op else ''
     return (
         '<tr%s %s><td class="idx n"></td>'
         '<td class="nm"><b>%s</b><span class="cd">%s</span></td>'
         '<td class="jd"><span class="tag %s">%s</span>'
-        '<span class="jd__n">%s%s</span>%s</td>'
+        '<span class="jd__n">%s%s</span>%s%s</td>'
         '<td class="ta-r">%s</td>'
         '<td>%s</td>'
         '<td class="ta-c">%s</td>'
@@ -233,7 +236,7 @@ def row_html(r, idx):
         '<td class="ta-c dt n">%s</td>'
         '<td class="ta-c">%s</td></tr>'
         % (fresh, attrs, escape(r['name']), escape(r['code']), tcls, escape(tag_text(r.get('judge'), r['bkt'])),
-           judge_note, cut, chg,
+           judge_note, cut, chg, al_html,
            h_price(r), h_space_cell(r['up']), h_win(r['win_v']),
            op_attr, h_gap(r['gap']), escape(r.get('date') or '—'), h_link(r))
     )
@@ -255,6 +258,9 @@ def card_html(r):
     gap_txt = '—' if r['gap'] is None else ('已在区间' if r['gap'] >= 0 else '需回调 %.1f%%' % abs(r['gap']))
     exp_txt = ('%.2f' % r['exp_v']) if r['exp_v'] is not None else '—'
     px_txt = r.get('px_n') or r.get('px') or '—'
+    al_txt = str(r.get('alert') or '').strip()
+    al_html = ('<div class="zcard__alert"><b>行情更新 · 报告出具后</b>%s</div>'
+               % escape(al_txt)) if al_txt else ''
     fresh_cls = ' is-fresh' if r.get('fresh') else ''
     return (
         '<article class="zcard%s" %s>'
@@ -269,12 +275,13 @@ def card_html(r):
         '<div><dt>距观察买点</dt><dd>%s</dd></div>'
         '<div><dt>报告日期</dt><dd class="n">%s</dd></div>'
         '</div>'
+        '%s'
         '<p class="zcard__j">%s</p>'
         '%s</article>'
         % (fresh_cls, attrs, escape(r['name']), escape(r['code']), tcls, escape(tag_text(r.get('judge'), r['bkt'])),
            tone, fmt_pct(r['up']), h_space(r['up'], big=True),
            escape(str(px_txt)), escape(exp_txt), win_txt, gap_txt,
-           escape(r.get('date') or '—'), escape(r.get('judge') or ''),
+           escape(r.get('date') or '—'), al_html, escape(r.get('judge') or ''),
            ('<a class="lk zcard__lk" href="%s" target="_blank" rel="noopener">查看报告原文 →</a>'
             % escape(r['url'])) if r.get('url') else '')
     )
@@ -580,6 +587,7 @@ TEMPLATE = r"""<!DOCTYPE html>
   --heat3-bg:#a9c1f2; --heat3-ink:#15307a;
   --dot-off:#e7ebf3; --dot-low:#98a1b3; --dot-mid:#c98a1c; --dot-mid-ink:#8a5c00;
   --chg-bg:#fdf3d6; --chg-ink:#7a5400;
+  --alert-bg:#fdf1e3; --alert-ink:#8a4b00; --alert-line:#d98324;
   --mast-a:#131a2e; --mast-b:#1a2547; --mast-c:#22396e;
   --mast-eyebrow:#89a0d6; --mast-glow:rgba(88,128,255,.30);
   --tt-ink:#b7c4e2; --tt-on:#16204a;
@@ -607,6 +615,7 @@ TEMPLATE = r"""<!DOCTYPE html>
   --heat3-bg:#d8bd8a; --heat3-ink:#552f06;
   --dot-off:#e3dccd; --dot-low:#a49a86; --dot-mid:#c0861b; --dot-mid-ink:#7a5200;
   --chg-bg:#f6e8c8; --chg-ink:#6b4500;
+  --alert-bg:#f4e3ca; --alert-ink:#7a4405; --alert-line:#b8760f;
   --mast-a:#231e17; --mast-b:#332a1d; --mast-c:#4a3a22;
   --mast-eyebrow:#c0a878; --mast-glow:rgba(180,140,80,.26);
   --tt-ink:#c9bda6; --tt-on:#2b2419;
@@ -630,6 +639,7 @@ TEMPLATE = r"""<!DOCTYPE html>
   --heat3-bg:#3c5490; --heat3-ink:#e0e9ff;
   --dot-off:#2b323f; --dot-low:#5d6674; --dot-mid:#c98a1c; --dot-mid-ink:#e5b256;
   --chg-bg:#3a2c17; --chg-ink:#e0a952;
+  --alert-bg:#3a2a12; --alert-ink:#f0b45c; --alert-line:#c9821f;
   --mast-a:#0e1220; --mast-b:#141b33; --mast-c:#1b2b52;
   --sh1:0 1px 2px rgba(0,0,0,.45); --sh2:0 6px 18px rgba(0,0,0,.55);
 }
@@ -882,6 +892,17 @@ td.jd .tag{display:inline-block}
   background:var(--surface-2);border-radius:var(--r1);padding:var(--s2) var(--s3)}
 .zcard__lk{margin-top:auto;align-self:flex-start}
 
+/* 行情更新提示（overrides.alert）：报告出具后发生的、与报告结论方向相反的行情事件。
+   刻意不用红/绿——本页红绿只承担涨跌语义；此条走琥珀，与「减持」桶同族但更重。 */
+.zcard__alert{margin:0;padding:8px 11px 8px 10px;background:var(--alert-bg);
+  border-left:3px solid var(--alert-line);border-radius:var(--r1);
+  font-size:var(--fs-xs);line-height:1.6;color:var(--alert-ink)}
+.zcard__alert b{display:block;font-weight:700;font-size:var(--fs-xs);letter-spacing:.02em;
+  margin-bottom:2px;color:var(--alert-ink)}
+.jd .al{display:inline-block;margin-left:5px;font-size:9.5px;font-weight:700;letter-spacing:.05em;
+  color:var(--alert-ink);background:var(--alert-bg);border-left:2px solid var(--alert-line);
+  border-radius:2px;padding:1px 5px;cursor:help;vertical-align:1.5px}
+
 /* ── 复核时间轴 ───────────────────────────────────────────────────── */
 .tls{list-style:none;margin:0;padding:0 0 0 var(--s4);position:relative}
 .tls::before{content:"";position:absolute;left:5px;top:6px;bottom:6px;width:2px;
@@ -1018,6 +1039,8 @@ var t=m[localStorage.getItem('wl-theme')];if(t){document.documentElement.setAttr
           <dd>B 类为早期「首次覆盖报告」，无期望价与胜率字段，仅列评级与机构目标价；A 类为方法论全管线报告。表中数值一律取自报告原文，报告未给出者留空，<strong>不在渲染层做任何估算</strong>。标「NEW」为本轮新分析（报告日 ≥ @@FRESH_FROM@@）。</dd>
           <dt>变化高亮</dt>
           <dd>与上一期快照比对，判定 / 期望价 / 胜率发生变动时，判定下方显示黄色标记，悬停可看上期判定。</dd>
+          <dt>行情更新（琥珀条）</dt>
+          <dd>报告出具<strong>之后</strong>发生、且与报告结论方向相反的行情事实，单独用琥珀条标出，条内自带日期、触发条件与规定动作。这是全页唯一允许引用「报告原文之外」数据的地方，因此它<strong>只陈述行情与报告里已经写死的规则，不修改报告的任何数值</strong>：卡片上的现价 / 期望价 / 胜率 / 报告日期仍是该报告自己的快照，两者不一致是刻意的。条内不用红绿，避免与涨跌语义抢占；出现琥珀条时，以条为准。</dd>
           <dt>配色档位</dt>
           <dd>右上角可切换三档：<strong>标准</strong>（默认，卡面 #f8fafc 而非纯白，明快不刺眼）、<strong>护眼</strong>（暖纸调、压低蓝光，长时间阅读）、<strong>深色</strong>（夜间盯盘）。选择记在本地浏览器，下次打开保持。三档共用同一套语义色逻辑——红绿只服务涨跌，判定三桶走 slate / indigo / amber，<strong>换档不改变任何含义</strong>。</dd>
           <dt>与 v1 的三处设计差异</dt>
@@ -1032,6 +1055,7 @@ var t=m[localStorage.getItem('wl-theme')];if(t){document.documentElement.setAttr
           <div><span>--j-n 回避</span><b><i class="sw" style="background:var(--j-n)"></i>slate</b></div>
           <div><span>--j-h 观察</span><b><i class="sw" style="background:var(--j-h)"></i>indigo</b></div>
           <div><span>--j-s 减持</span><b><i class="sw" style="background:var(--j-s)"></i>amber</b></div>
+          <div><span>--alert-line 行情更新</span><b><i class="sw" style="background:var(--alert-line)"></i>amber 深</b></div>
           <div><span>--brand 强调</span><b><i class="sw" style="background:var(--brand)"></i>随档位</b></div>
           <div><span>字号 6 档</span><b>11.5 → 32px</b></div>
         </div>
