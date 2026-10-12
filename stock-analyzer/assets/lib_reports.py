@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""stock-analyzer · 资料库「个股报告」历史版本检索 / 旧版归档
+"""stock-analyzer · 资料库「个股报告」历史版本检索 / 全量盘查 / 旧版归档
 
-两个子命令（对应 SKILL.md 的 Phase 0a 与 Phase 11）：
+三个子命令（对应 SKILL.md 的 Phase 0a 与 Phase 11）：
 
   scan     列出资料库「个股报告」文件夹的全部子节点，按 --code / --name 过滤出
            同一标的的历史版本，按日期倒序打印，并给出结论行与待归档清单。
@@ -11,13 +11,19 @@
              - MULTI_VERSION 命中 ≥2 版 → 除确认模式外，收尾必须归档旧版至只剩 1 版
            只读，不修改任何节点。幂等，可反复跑。
 
+  audit    全量盘查（不分标的）：把「个股报告」内全部节点按标的归组，一次列出所有
+           「同标的多版本并存」的组、以及完全同名的疑似重复上传，并给出待归档 node-id
+           清单与现成可跑的命令。结论行 CLEAN / NEEDS_ACTION。只读。
+
   archive  把指定 node-id 移到「旧版归档」文件夹（space.workspace.move-node）。
            `parentId` 已在归档夹内的节点自动跳过，因此可重复执行（幂等）。
            支持 --dry-run。
 
 用法：
-  python lib_reports.py scan --code 689009 --name 九号公司
-  python lib_reports.py scan --space-id <sid> --folder-id <fid> --code 09992 --name 泡泡玛特 --json
+  python lib_reports.py scan  --code 689009 --name 九号公司
+  python lib_reports.py scan  --space-id <sid> --folder-id <fid> --code 09992 --name 泡泡玛特 --json
+  python lib_reports.py audit                                  # 全量盘查，列多版本组
+  python lib_reports.py audit  --json
   python lib_reports.py archive --archive-id <aid> --node-id <旧版 node-id> [--node-id ...] [--dry-run]
 
 默认 space_id / folder_id / archive_id 为本项目实测值（见 watchlist_manifest.json 的 space 段），
@@ -55,8 +61,9 @@ TYPE_KEYS = [
 
 DATE_FULL = re.compile(r"(20\d{2})-(\d{2})-(\d{2})")
 DATE_COMPACT = re.compile(r"(?<!\d)(20\d{2})(\d{2})(\d{2})(?!\d)")
-CODE_PAREN = re.compile(r"[（(]\s*(\d{6})(\.HK)?\s*[)）]", re.I)
-CODE_HK = re.compile(r"(?<!\d)(\d{5})\s*HK\b", re.I)
+# 括号内代码：A 股 6 位；港股 5 位（须带 .HK 后缀，否则不认，避免与 A 股混淆）
+CODE_PAREN = re.compile(r"[（(]\s*(\d{5,6})(\.HK)?\s*[)）]", re.I)
+CODE_HK = re.compile(r"(?<!\d)(\d{5})\s*\.?\s*HK\b", re.I)
 CODE_BARE = re.compile(r"(?<!\d)(\d{6})(?!\d)")
 NAME_SPLIT = re.compile(r"[（(|\-_/·]")
 NAME_JUNK = re.compile(r"\s+")
@@ -130,7 +137,9 @@ def parse_title(title: str) -> dict:
     code = None
     m = CODE_PAREN.search(title)
     if m:
-        code = m.group(1) + (".HK" if m.group(2) else "")
+        digits, suffix = m.group(1), m.group(2)
+        if len(digits) == 6 or suffix:      # 6 位 A 股；5 位仅在带 .HK 时认
+            code = digits + (".HK" if suffix else "")
     if not code:
         m = CODE_HK.search(stripped)
         if m:
@@ -270,6 +279,132 @@ def fmt_ts(ts) -> str:
         return "-"
 
 
+# ---------------------------------------------------------------- audit
+
+def group_key(item: dict, name_codes: dict) -> str:
+    """归组键：有代码用代码；无代码看该名称在全库是否只对应一个代码，是则借用。"""
+    code = code_key(item.get("code"))
+    if code:
+        return code
+    name = item.get("name") or ""
+    codes = name_codes.get(name) or set()
+    if name and len(codes) == 1:
+        return next(iter(codes))
+    return "name:" + name if name else ""
+
+
+def cmd_audit(args) -> int:
+    lib_dir = load_lib_dir(args.lib_dir)
+    space_id, folder_id, _ = resolve_ids(args)
+
+    nodes = list_all_nodes(lib_dir, space_id, folder_id)
+    folders = [n for n in nodes if (n.get("kind") or "") == "folder"]
+    nodes = [n for n in nodes if (n.get("kind") or "") != "folder"]
+    parsed = []
+    for n in nodes:
+        item = parse_title(n.get("title"))
+        item.update({"id": n.get("id"), "title": n.get("title") or "",
+                     "updated_at": n.get("updatedAt") or 0})
+        parsed.append(item)
+
+    # 名称 → 代码集合（供无代码节点借码）
+    name_codes = {}
+    for p in parsed:
+        if p.get("name") and code_key(p.get("code")):
+            name_codes.setdefault(p["name"], set()).add(code_key(p["code"]))
+
+    groups = {}
+    unkeyed = []
+    for p in parsed:
+        k = group_key(p, name_codes)
+        if k:
+            groups.setdefault(k, []).append(p)
+        else:
+            unkeyed.append(p)
+    for v in groups.values():
+        v.sort(key=sort_key, reverse=True)
+
+    multi = {k: v for k, v in groups.items() if len(v) > 1}
+    dup_titles = {}
+    for p in parsed:
+        dup_titles.setdefault(p["title"], []).append(p)
+    dup_titles = {k: v for k, v in dup_titles.items() if len(v) > 1}
+
+    plans = []          # 每个需要归档的标的：{key, name, latest, old[], same_day_old[]}
+    for k, v in sorted(multi.items(), key=lambda kv: kv[1][0]["name"]):
+        same_day = [p for p in v[1:] if p["date"] and p["date"] == v[0]["date"]]
+        plans.append({"key": k, "name": v[0]["name"] or k, "latest": v[0],
+                      "old": v[1:], "same_day": same_day})
+
+    to_archive = [p for pl in plans for p in pl["old"]]
+
+    if args.json:
+        out(json.dumps({
+            "total_nodes": len(parsed) + len(folders),
+            "reports": len(parsed),
+            "folders": len(folders),
+            "duplicate_titles": [{"title": k, "ids": [p["id"] for p in v]} for k, v in dup_titles.items()],
+            "unkeyed": unkeyed,
+            "all_groups": {k: v for k, v in sorted(groups.items())},
+            "multi_groups": plans,
+            "to_archive": to_archive,
+            "audit_result": "CLEAN" if not plans and not dup_titles else "NEEDS_ACTION",
+        }, ensure_ascii=False, indent=1))
+        return 0
+
+    out("=== 资料库「个股报告」全量盘查 ===")
+    out("space : %s" % space_id)
+    out("folder: %s   （个股报告）" % folder_id)
+    out("节点: %d（报告 %d / 子文件夹 %d）    独立标的组: %d    多版本组: %d"
+        % (len(parsed) + len(folders), len(parsed), len(folders), len(groups), len(multi)))
+    out("")
+
+    if unkeyed:
+        out("--- ⚠ 无法归组（标题里既无代码、名称也解析不出）%d 条，需人工看 ---" % len(unkeyed))
+        for p in unkeyed:
+            out("   · %s   node_id=%s" % (p["title"], p["id"]))
+        out("")
+
+    if dup_titles:
+        out("--- ⚠ 完全同名（同一标题出现 ≥2 次，疑重复上传）%d 组 ---" % len(dup_titles))
+        for t, v in dup_titles.items():
+            out("   · %s   ×%d" % (t, len(v)))
+            for p in v:
+                out("        node_id=%s  updated=%s" % (p["id"], fmt_ts(p["updated_at"])))
+        out("")
+
+    if not plans:
+        out("AUDIT_RESULT: CLEAN")
+        out("  未发现同标的多版本并存，无需归档。")
+        return 0
+
+    out("--- 需要归档的标的（%d 组，共 %d 条旧版）---" % (len(plans), len(to_archive)))
+    for pl in plans:
+        borrowed = "" if code_key(pl["latest"].get("code")) else "   ← 借名归组"
+        out("[%s] %s   共 %d 版%s" % (pl["key"], pl["name"], len(pl["old"]) + 1, borrowed))
+        p = pl["latest"]
+        out("   KEEP     %-10s %-13s %s   id=%s" % (p["date"] or "(无日期)", p["rtype"], p["title"], p["id"]))
+        for q in pl["old"]:
+            mark = "  ⚠ 与最新版同日、仅类型不同" if q in pl["same_day"] else ""
+            out("   ARCHIVE  %-10s %-13s %s   id=%s%s"
+                % (q["date"] or "(无日期)", q["rtype"], q["title"], q["id"], mark))
+        out("")
+
+    out("AUDIT_RESULT: NEEDS_ACTION")
+    out("  待归档 %d 条（每个标的只保留上面 KEEP 的那一版）：" % len(to_archive))
+    out("    %s" % ", ".join(p["id"] for p in to_archive))
+    if any(pl["same_day"] for pl in plans):
+        out("")
+        out("  ⚠ 标 ⚠ 的条目与最新版**同日、仅报告类型不同**，可能属互补文档而非新老版本。")
+        out("    归档前必须人工判断：确属互补 → 保留；确属取代 → 才归档。")
+    out("")
+    out("  执行（先 --dry-run 看清要动哪些）：")
+    out("    python lib_reports.py archive --manifest <manifest> \\")
+    out("      %s" % " \\\n      ".join("--node-id %s" % p["id"] for p in to_archive))
+    out("  执行后必须回扫核对：python lib_reports.py audit   → 期望 AUDIT_RESULT: CLEAN")
+    return 0
+
+
 # ---------------------------------------------------------------- archive
 
 def cmd_archive(args) -> int:
@@ -345,6 +480,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--name", help="标的简称（代码不可得时的兜底）")
     s.add_argument("--json", action="store_true", help="输出机器可读 JSON")
     s.set_defaults(func=cmd_scan)
+
+    u = sub.add_parser("audit", parents=[common], help="全量盘查：列出所有多版本组与重复标题（只读）")
+    u.add_argument("--json", action="store_true", help="输出机器可读 JSON")
+    u.set_defaults(func=cmd_audit)
 
     a = sub.add_parser("archive", parents=[common], help="把旧版节点移入「旧版归档」（幂等）")
     a.add_argument("--node-id", action="append", required=True, help="可重复传多个")

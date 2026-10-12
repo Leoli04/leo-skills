@@ -730,7 +730,7 @@ python <skill>/assets/verify_report.py "<报告.html>" --skill-dir <skill>
 
 **为什么必须做**：单份报告是孤立的，分析到第 20 只以后，前 19 只的结论会被遗忘。台账把每只标的的**最新结论**收敛成一行（判定 / 现价 / 加权期望价 / 期望收益 / 胜率 / 观察买点 / 复核期 / 原文链接），并提供与上一期快照的差异标记。**每产出一份新报告，必须同步更新台账**；用户问「观察池 / 台账 / 现在看哪些 / 上次结论是什么」时也走这里。
 
-**触发时机**：① 新报告交付后（收尾动作，与 Phase 9.5 并列）；② **上传新版后的旧版归档（见下「上传后归档」，与 ① 同批做）**；③ 用户要求总览；④ 需要回填历史报告时一次性执行；⑤ 分析开工前先跑一次 `scan`（Phase 0a），结果可直接喂给本节的归并步骤。
+**触发时机**：① 新报告交付后（收尾动作，与 Phase 9.5 并列）；② **上传新版后的旧版归档（见下「上传后归档」，与 ① 同批做）**；③ 用户要求总览；④ 需要回填历史报告时一次性执行；⑤ 分析开工前先跑一次 `scan`（Phase 0a），结果可直接喂给本节的归并步骤；⑥ **用户要求「查一下库里重复/老的报告并归档」时，跑一次 `audit` 全量盘查**（见下「全量盘查」）。
 
 **四步流程**（配置驱动，禁止每次重写脚本）：
 
@@ -777,7 +777,7 @@ python <skill>/assets/verify_report.py "<报告.html>" --skill-dir <skill>
 
 用户的硬要求：**新版上传后，若「个股报告」里同标的存在新老两份，必须把老报告移入「旧版归档」**，库内只留最新一版。资料库**不支持删除页面 / 文件夹节点**，只能用 `move-node` 移位。
 
-固定动作，顺序不可调换：
+**单个标的**（刚上传完那份，逐标核对用）：固定动作，顺序不可调换：
 
 1. **上传新版** —— `import_html.py --space-id <space_id> --parent-id <report_folder_id>`，落在「个股报告」内（见下「交付」）。
 2. **重扫一次** —— **不能复用 Phase 0a 的结果**（上传后节点集合已变，新节点此刻才出现）：
@@ -799,6 +799,25 @@ python <skill>/assets/verify_report.py "<报告.html>" --skill-dir <skill>
 
 > 边界：`TO_ARCHIVE` 里若出现「与最新版**同日、仅报告类型不同**」的条目（如「投资分析报告」与「净利率收敛空间测算」），那可能是**互补文档而非新老版本** —— 脚本会标 `⚠` 提醒。这种情况下**归档前必须人工判断**：确属互补则保留，确属取代才移动。脚本只给建议清单，不代替判断。
 
+**全量盘查（批量清理用 · 不能逐标扫时）**
+
+用户说「查一下库里重复的 / 老的报告，归到归档去」这类**枚举式需求**时，逐标跑 `scan` 不现实（要先把全库标的列一遍）。改跑一次 `audit`：
+
+```bash
+python <skill>/assets/lib_reports.py audit --manifest <工作目录>/watchlist_manifest.json
+```
+
+它把「个股报告」内**全部节点按标的归组**（有代码用代码；无代码的节点若其名称在全库只对应一个代码，则借名归组，打印时标 `← 借名归组`），一次给出：
+
+| 输出段 | 含义 | 动作 |
+|---|---|---|
+| `--- 需要归档的标的（N 组）---` | 每个多版本组，逐条标 `KEEP` / `ARCHIVE` | 按 `待归档 node-id` 清单跑 `archive` |
+| `--- ⚠ 无法归组 ---` | 标题里既无代码、名称也解析不出 | 人工看，必要时 `rename-node` |
+| `--- ⚠ 完全同名 ---` | 同一标题出现 ≥2 次（疑重复上传） | 人工比对后留一版 |
+| `AUDIT_RESULT: CLEAN` | 没有任何多版本组 | 无事可做，收工 |
+
+结论只需看两行：`AUDIT_RESULT: NEEDS_ACTION` 时把脚本直接吐出的 `待归档 node-id` 清单喂给 `archive`；`CLEAN` 即已完成。**验收同样以回扫为准** —— 归档后再跑一次 `audit`，必须变 `CLEAN`（不看 `move-node` 返回值）。只读，可反复跑。
+
 **交付**：本地 HTML 双击可开（零 CDN、零外链），再用 `library` skill 的 `page/import_html.py` 上传到「个股报告」文件夹（`--space-id` + `--parent-id <report_folder_id>`）；上传前必须确认 HTML 内**无任何第三方 http(s) 资源**（import 有 image-hosting 外链门槛）。台账上传到 `parent_id`（「投资」根），覆盖更新用 `--node-block-id <台账节点ID>`，**不要传 `--file-name`**（不带扩展名会报「不支持的文件扩展名」）。
 
 **踩坑固化（改脚本前必读，每一条都是实测撞出来的）**：
@@ -817,6 +836,7 @@ python <skill>/assets/verify_report.py "<报告.html>" --skill-dir <skill>
 - 渲染后跑一次外链扫描（第三方 http(s) 资源数必须为 0）与 JS 语法检查
 - **Phase 0a 已执行、评估模式已确认**（检索输出 + 用户的选择见当日 memory 日志）—— 这是唯一能证明「没有绕过模式确认」的凭据，日志里缺这一条即视为未做
 - **同标的库内只剩 1 版** —— 上传后重扫 `lib_reports.py scan` 的输出必须是 `HISTORY_FOUND`，不得是 `MULTI_VERSION`；被归档的旧版 `node_id` 已记进日志
+- **全库无多版本残留** —— 归档动作做完后重跑 `lib_reports.py audit`，输出必须是 `AUDIT_RESULT: CLEAN`（`NEEDS_ACTION` 说明还有漏网）
 
 ---
 
@@ -829,18 +849,21 @@ python <skill>/assets/verify_report.py "<报告.html>" --skill-dir <skill>
 **填写范例**（同一蓝本的原始完整报告）。模板给「骨架 + 占位粒度」，本范例给「每一节实际该写到多细、句式与表格如何处理」的参照。不确定某节内容密度时，对照它看；不要直接复制它的数据。
 
 ### assets/lib_reports.py
-资料库「个股报告」历史版本检索 / 旧版归档（Phase 0a 与 Phase 11「上传后归档」的执行者），两个子命令：
+资料库「个股报告」历史版本检索 / 全量盘查 / 旧版归档（Phase 0a 与 Phase 11「上传后归档」的执行者），三个子命令：
 
-- `scan` —— 只读。列出「个股报告」文件夹全部子节点（自动翻页），解析标题里的**代码 / 名称 / 报告类型 / 日期**（兼容 `名称(代码)_类型_YYYY-MM-DD`、`名称-类型-YYYYMMDD`、`代码-analysis-YYYY-MM-DD` 等历史格式），按 `--code` / `--name` 过滤出同标的版本，日期倒序打印，输出结论行 **`NO_HISTORY` / `HISTORY_FOUND` / `MULTI_VERSION`** 与 `LATEST` / `TO_ARCHIVE` 清单。文件夹类节点自动排除。
+- `scan` —— 只读。列出「个股报告」文件夹全部子节点（自动翻页），解析标题里的**代码 / 名称 / 报告类型 / 日期**（兼容 `名称(代码)_类型_YYYY-MM-DD`、`名称-类型-YYYYMMDD`、`代码-analysis-YYYY-MM-DD` 等历史格式；**港股 `(09992.HK)` 也认**），按 `--code` / `--name` 过滤出同标的版本，日期倒序打印，输出结论行 **`NO_HISTORY` / `HISTORY_FOUND` / `MULTI_VERSION`** 与 `LATEST` / `TO_ARCHIVE` 清单。文件夹类节点自动排除。
+- `audit` —— 只读。**全量盘查**，不分标的：全部节点按标的归组（无代码节点若名称在全库唯一则借名归组），一次列出所有「多版本并存」组（逐条标 `KEEP` / `ARCHIVE`）、无法归组的节点、完全同名的疑似重复上传，并吐出可直接执行的 `archive` 命令。结论行 **`CLEAN` / `NEEDS_ACTION`**。批量清理与「库里还有没有重复/老报告」类需求的入口。
 - `archive` —— 把 `--node-id` 指定节点 `move-node` 进 `--archive-id`（旧版归档）。**幂等**：`parentId` 已在归档夹内则 `[SKIP ]`。`--dry-run` 空跑。
 
 ```bash
 python lib_reports.py scan    --manifest <工作目录>/watchlist_manifest.json --code 689009 --name 九号公司
 python lib_reports.py scan    --code 600066 --name 宇通客车 --json        # 机器可读
+python lib_reports.py audit   --manifest <工作目录>/watchlist_manifest.json   # 全量盘查
+python lib_reports.py audit   --json                                     # 机器可读（含 all_groups）
 python lib_reports.py archive --manifest <...> --node-id <旧版 id> --dry-run
 ```
 
-`space_id` / `report_folder_id` / `archive_folder_id` 优先级：命令行参数 > `--manifest` 的 `space` 段 > 脚本内置本项目默认值。依赖内置 `library` skill 的 `space_api.py`，其目录可用 `--lib-dir` 或环境变量 `WORKBUDDY_LIBRARY_DIR` 覆盖。**回答三问**：① 对照 = 库内「个股报告」的直接子节点；② 阈值 = 命中 ≥1 必须人工确认模式、≥2 必须归档至剩 1 版；③ 报错 = 脚本打印的 `SCAN_RESULT` 行 + Phase 11 交付前自检项。
+`space_id` / `report_folder_id` / `archive_folder_id` 优先级：命令行参数 > `--manifest` 的 `space` 段 > 脚本内置本项目默认值。依赖内置 `library` skill 的 `space_api.py`，其目录可用 `--lib-dir` 或环境变量 `WORKBUDDY_LIBRARY_DIR` 覆盖。**回答三问**：① 对照 = 库内「个股报告」的直接子节点；② 阈值 = 命中 ≥1 必须人工确认模式、≥2 必须归档至剩 1 版、`audit` 报 `NEEDS_ACTION` 必须清到 `CLEAN`；③ 报错 = 脚本打印的 `SCAN_RESULT` / `AUDIT_RESULT` 行 + Phase 11 交付前自检项。
 
 ### assets/verify_report.py
 报告内容回查脚本（Phase 9.5 第一遍）。`python verify_report.py <报告.html> --skill-dir <skill>`。自动核：**报告文件名规范**（`名称(代码)_类型_YYYY-MM-DD`，见 Phase 7）、标签配平、section 数、canvas/Chart 配对、版本号统一、自检计数、红线/陷阱基准、买入门槛 = 现价 × 1.15、情景概率和、加权期望价、赔率写法、占位符、外部依赖。退出码 0 = 无 FAIL。基准计数（报告采用基准 60/49/67，与素材数 60/49/76 是两个概念）从 `redlines.md` 自动读取，改条目后无需改脚本。命名规范的三个可调常量在文件头：`NAME_STD_RE`（标准格式）、`NAME_RULE_SINCE`（生效日，此前的历史报告判 WARN）、`NAME_NON_STOCK_KW`（非个股报告类产物豁免词）。

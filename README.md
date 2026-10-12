@@ -59,7 +59,7 @@ python screen.py --type value,dividend   # 只跑指定类型
   - `SKILL.md` — 10 步流水线 + Phase 0–11（**Phase 0a 历史报告检索与评估模式确认** / Phase 0b 口径确认 / **Phase 9.5 报告内容回查** / **Phase 11 观察池台账 + 上传后旧版归档**）
   - `assets/report_template.html` — 生产级 11 节报告模板
   - `assets/verify_report.py` — **报告回查脚本**，自动核验标签配平、版本号、计数、折现/期望价/门槛算术等 19 项
-  - `assets/lib_reports.py` — **资料库历史报告检索 / 旧版归档**（`scan` 只读检索同标的历史版本并给出 `NO_HISTORY` / `HISTORY_FOUND` / `MULTI_VERSION` 结论；`archive` 幂等移入「旧版归档」）
+  - `assets/lib_reports.py` — **资料库历史报告检索 / 全量盘查 / 旧版归档**（`scan` 按标的检索历史版本，给出 `NO_HISTORY` / `HISTORY_FOUND` / `MULTI_VERSION`；`audit` 全量盘查，一次列出所有「多版本并存」组与重复标题，给出 `CLEAN` / `NEEDS_ACTION`；`archive` 幂等移入「旧版归档」）
   - `references/methodology.md` — 方法论全文结构速查
   - `references/redlines.md` — 43 条红线 / 26 个陷阱 / 38 项自检
   - `references/data_pipeline.md` — 实测可用的数据管线接口
@@ -70,6 +70,9 @@ python screen.py --type value,dividend   # 只跑指定类型
 # 开工前先查资料库有无同标的历史报告（取数之前必跑）
 python assets/lib_reports.py scan --manifest <工作目录>/watchlist_manifest.json \
   --code 600066 --name 宇通客车
+
+# 全量盘查：一次列出库里所有「同标的多版本并存」与重复标题
+python assets/lib_reports.py audit --manifest <工作目录>/watchlist_manifest.json
 
 # 报告生成后回查（交付前必跑）
 python assets/verify_report.py "<报告.html>" --skill-dir <stock-analyzer 目录>
