@@ -23,6 +23,7 @@ v1 -> v2 的四处根因改造（均针对「无法一眼做决策」这一根�
 """
 import io
 import json
+import os
 import re
 import argparse
 from html import escape
@@ -201,6 +202,29 @@ def h_link(r):
     return '<a class="lk" href="%s" target="_blank" rel="noopener">原文</a>' % escape(r['url'])
 
 
+def op_badge_html(op, held=False):
+    """观察池持仓徽标：manifest positions 中的标的固定标「持仓中」（tooltip 带摘要）；
+    非持仓标的保留报告「操作」字段的压缩文案口径（如贵州茅台的「持有中」）。"""
+    o = (op or '').strip()
+    if held:
+        tip = o if o else '持仓中'
+        return '<span class="opb" title="%s">持仓中</span>' % escape(tip, quote=True)
+    if not o:
+        return ''
+    if len(o) <= 8:
+        lab = o
+    elif '建仓' in o:
+        lab = '建仓中'
+    elif '持有' in o:
+        lab = '持有中'
+    elif '减仓' in o or '减持' in o:
+        lab = '减持中'
+    else:
+        head = re.split(r'[；;，,。/（(（\s]', o)[0]
+        lab = head[:8] + ('…' if len(head) > 8 else '')
+    return '<span class="opb" title="%s">%s</span>' % (escape(op, quote=True), escape(lab))
+
+
 def row_html(r, idx):
     tcls, _ = BUCKET[r['bkt']]
     attrs = (
@@ -212,7 +236,7 @@ def row_html(r, idx):
            '' if r['gap'] is None else r['gap'],
            escape(r['search'], quote=True))
     )
-    fresh = ' class="is-fresh"' if r.get('fresh') else ''
+    fresh = ' is-fresh' if r.get('fresh') else ''
     chg = ''
     if r.get('chg'):
         chg = '<span class="chg" title="上期判定：%s">%s</span>' % (
@@ -221,11 +245,12 @@ def row_html(r, idx):
     cut = '…' if len(r.get('judge') or '') > 46 else ''
     op = r.get('op') or ''
     op_attr = ' title="%s"' % escape(op, quote=True) if op else ''
+    op_badge = op_badge_html(op, bool(r.get('_held')))
     return (
         '<tr%s %s><td class="idx n"></td>'
         '<td class="nm"><b>%s</b><span class="cd">%s</span></td>'
         '<td class="jd"><span class="tag %s">%s</span>'
-        '<span class="jd__n">%s%s</span>%s</td>'
+        '<span class="jd__n">%s%s</span>%s%s</td>'
         '<td class="ta-r">%s</td>'
         '<td>%s</td>'
         '<td class="ta-c">%s</td>'
@@ -233,7 +258,7 @@ def row_html(r, idx):
         '<td class="ta-c dt n">%s</td>'
         '<td class="ta-c">%s</td></tr>'
         % (fresh, attrs, escape(r['name']), escape(r['code']), tcls, escape(tag_text(r.get('judge'), r['bkt'])),
-           judge_note, cut, chg,
+           judge_note, cut, chg, op_badge,
            h_price(r), h_space_cell(r['up']), h_win(r['win_v']),
            op_attr, h_gap(r['gap']), escape(r.get('date') or '—'), h_link(r))
     )
@@ -256,11 +281,13 @@ def card_html(r):
     exp_txt = ('%.2f' % r['exp_v']) if r['exp_v'] is not None else '—'
     px_txt = r.get('px_n') or r.get('px') or '—'
     fresh_cls = ' is-fresh' if r.get('fresh') else ''
+    op = r.get('op') or ''
+    op_badge = op_badge_html(op, bool(r.get('_held')))
     return (
         '<article class="zcard%s" %s>'
         '<div class="zcard__top"><span class="zcard__idx n"></span>'
         '<div class="zcard__id"><b>%s</b><span class="cd">%s</span></div>'
-        '<span class="tag %s">%s</span></div>'
+        '<span class="tag %s">%s</span>%s</div>'
         '<div class="zcard__hero"><div class="zh__v %s n">%s</div>'
         '<div class="zh__l">潜在空间 <span class="dim">= 期望价 ÷ 现价 − 1</span></div>%s</div>'
         '<div class="zcard__kv">'
@@ -271,7 +298,7 @@ def card_html(r):
         '</div>'
         '<p class="zcard__j">%s</p>'
         '%s</article>'
-        % (fresh_cls, attrs, escape(r['name']), escape(r['code']), tcls, escape(tag_text(r.get('judge'), r['bkt'])),
+        % (fresh_cls, attrs, escape(r['name']), escape(r['code']), tcls, escape(tag_text(r.get('judge'), r['bkt'])), op_badge,
            tone, fmt_pct(r['up']), h_space(r['up'], big=True),
            escape(str(px_txt)), escape(exp_txt), win_txt, gap_txt,
            escape(r.get('date') or '—'), escape(r.get('judge') or ''),
@@ -285,7 +312,7 @@ THEAD = (
     '<th class="c-jd">当前判定</th>'
     '<th class="c-px ta-r">价格带　现价 → 期望价</th>'
     '<th class="c-sp">潜在空间 <span class="th-h">0 轴居中</span></th>'
-    '<th class="c-win ta-c">买入胜率</th>'
+    '<th class="c-win ta-c">@@WIN_TH@@</th>'
     '<th class="c-gp ta-r">距买点</th>'
     '<th class="c-dt ta-c">报告日</th>'
     '<th class="c-lk ta-c">原文</th></tr></thead>'
@@ -304,8 +331,33 @@ def zone_table(rows_):
             % (COLGROUP, THEAD, body))
 
 
+def _zoneA_text(rows_):
+    """A 区结语按数据生成 —— 现价一变，达标数与「是否已进买点区间」都会变，
+    写死文案会与图表自相矛盾（2026-10-12 现价刷新时实测踩到）。"""
+    n_ok = sum(1 for r in rows_ if r['up'] is not None and r['up'] >= 15
+               and r['win_v'] is not None and r['win_v'] >= 30)
+    n_hi = sum(1 for r in rows_ if r['win_v'] is not None and r['win_v'] >= 30)
+    n_in = sum(1 for r in rows_ if r['gap'] is not None and r['gap'] >= 0)
+    desc = '期望价高于现价（潜在空间 ≥ 0）'
+    if n_in:
+        desc += '；其中 %d 只现价已进入观察买点区间' % n_in
+    else:
+        desc += '；尚未进入观察买点区间'
+    if n_ok:
+        note = ('上行空间为正；其中 %d 只同时满足「潜在空间 ≥ +15%% 且胜率 ≥ 30%%」的建仓门槛，'
+                '另有 %d 只胜率达标但空间未达门槛。仍须回到报告原文逐个核验证点。' % (n_ok, n_hi - n_ok))
+    elif n_hi:
+        note = ('上行空间为正，且已有 %d 只胜率 ≥ 30%%，但空间均未达 +15%% 门槛，'
+                '尚不构成建仓信号。' % n_hi)
+    else:
+        note = '上行空间为正，但胜率均低于 30%，尚不构成建仓信号。'
+    return desc, note
+
+
 def zone_block(zone, rows_):
     _, letter, title, desc, note = next(z for z in ZONE_META if z[0] == zone)
+    if zone == 'A':
+        desc, note = _zoneA_text(rows_)
     body = ('<div class="zcards">%s</div>' % ''.join(card_html(r) for r in rows_)) \
         if zone == 'A' else zone_table(rows_)
     note_html = '<div class="zone__note">%s</div>' % escape(note) if note else ''
@@ -349,13 +401,20 @@ def viz_space(rows_):
             '</div><div class="cbar__x n">%s</div>%s</div>'
             % (tone, h, c, escape(lab), '<div class="cbar__s">%s</div>' % sub if sub else '')
         )
+    n_pass = sum(1 for r in rows_ if r['up'] is not None and r['up'] >= 15
+                 and r['win_v'] is not None and r['win_v'] >= 30)
+    if n_pass:
+        foot = ('0 轴右侧为「期望价高于现价」；建仓门槛为潜在空间 ≥ +15%% 且胜率 ≥ 30%%，'
+                '<b class="hl-up">本轮 %d 只达标</b>。分档左闭右开，如 −5.0%% 计入「−5 ~ 0」档。' % n_pass)
+    else:
+        foot = ('0 轴右侧为「期望价高于现价」；建仓门槛为潜在空间 ≥ +15%% 且胜率 ≥ 30%%'
+                '（本轮 0 只达标）。分档左闭右开，如 −5.0%% 计入「−5 ~ 0」档。')
     return (
         '<div class="viz"><div class="viz__h">潜在空间分布'
         '<span class="viz__s">%d 只有量化期望价 · 单位 %%</span></div>'
         '<div class="bars">%s</div>'
-        '<div class="viz__f">0 轴右侧为「期望价高于现价」；建仓门槛为潜在空间 ≥ +15%% 且胜率 ≥ 30%%（本轮 0 只达标）。'
-        '分档左闭右开，如 −5.0%% 计入「−5 ~ 0」档。</div>'
-        '</div>' % (len(vals), ''.join(cols))
+        '<div class="viz__f">%s</div>'
+        '</div>' % (len(vals), ''.join(cols), foot)
     )
 
 
@@ -379,14 +438,21 @@ def viz_matrix(rows_):
                     % (escape(rlab), ''.join(cells), rt))
     head = ''.join('<th class="ta-c">%s</th>' % escape(c) for c, _, _ in COL_DEFS)
     foot = ''.join('<td class="mx__t n">%d</td>' % c for c in col_tot)
+    # 右上角 = 「胜率 ≥ 30%」行 × 「潜在空间 ≥ 0」列，即「胜率与赔率同时达标」
+    hi_cell = sum(1 for r in pool if r['win_v'] >= 30 and r['up'] >= 0)
+    if hi_cell:
+        mx_foot = ('右上角（高胜率 × 正空间）<b class="hl-up">有 %d 只</b> —— '
+                   '即全池存在「胜率与赔率同时达标」的标的，见各区名单。' % hi_cell)
+    else:
+        mx_foot = '右上角（高胜率 × 正空间）为空 —— 即全池不存在「胜率与赔率同时达标」的标的。'
     return (
         '<div class="viz"><div class="viz__h">赔率矩阵'
         '<span class="viz__s">胜率 ＼ 潜在空间 · 单位：只</span></div>'
         '<table class="mx"><thead><tr><th class="mx__h">胜率 ＼ 空间</th>%s'
         '<th class="ta-c">合计</th></tr></thead><tbody>%s</tbody>'
         '<tfoot><tr><th>合计</th>%s<td class="mx__t n">%d</td></tr></tfoot></table>'
-        '<div class="viz__f">右上角（高胜率 × 正空间）为空 —— 即全池不存在「胜率与赔率同时达标」的标的。</div>'
-        '</div>' % (head, ''.join(body), foot, len(pool))
+        '<div class="viz__f">%s</div>'
+        '</div>' % (head, ''.join(body), foot, len(pool), mx_foot)
     )
 
 
@@ -452,6 +518,105 @@ def calendar(rows_):
 
 
 # ── 主流程 ────────────────────────────────────────────────────────────
+def positions_html(positions, rows_by_code):
+    """持仓与后期计划 Tab：概览表（点击行跳转对应计划卡）→ 汇总条 → 持仓卡。
+    数据来自 manifest 顶层 positions 段，现价与观察池行情联动。"""
+    if not positions:
+        return '<div class="pos-empty">manifest 未配置 positions 段，暂无持仓数据。</div>'
+    rows_by_code = rows_by_code or {}
+    total_mv = 0.0
+    total_cost = 0.0
+    n_cost = 0
+    items = []
+    cards = []
+    for p in positions:
+        r = rows_by_code.get(p['code']) or {}
+        px_s = r.get('px_n') or r.get('px') or ''
+        px = float(px_s) if px_s else 0.0
+        cur = r.get('cur', '元')
+        chg = r.get('px_chg', '')
+        shares = p.get('shares', 0)
+        mv = shares * px
+        total_mv += mv
+        cost = p.get('cost')
+        cost_html = ''
+        pl_html = ''
+        if cost is not None and px:
+            cost_v = cost * shares
+            total_cost += cost_v
+            n_cost += 1
+            pl = mv - cost_v
+            plp = (px / cost - 1) * 100
+            cls = 'is-up' if pl >= 0 else 'is-down'
+            pl_html = ('<div class="pos__pl"><dt>浮动盈亏（对成本）</dt>'
+                       '<dd class="%s n">%+.1f%% <span>%+.0f 元</span></dd></div>' % (cls, plp, pl))
+            cost_html = '%.3f %s' % (cost, cur)
+            pl_txt = '<span class="%s n">%+.1f%%</span>' % (cls, plp)
+        else:
+            cost_html = p.get('cost_label') or '—'
+            pl_txt = '<span class="dim">%s</span>' % escape(p.get('cost_label') or '—')
+        px_html = ('%s <span class="pos__chg">今日 %s%%</span>' % (px_s, chg)) if px_s and chg != '' else (px_s or '—')
+        max_n = p.get('shares_total')
+        shares_txt = '%d 股' % shares if shares else '—'
+        if max_n and max_n != shares:
+            shares_txt += ' <span class="dim">/ 计划 %d</span>' % max_n
+        items.append({'code': p['code'], 'name': p['name'], 'strategy': p.get('strategy', ''),
+                      'shares_txt': shares_txt, 'cost_html': cost_html, 'px_s': px_s or '—',
+                      'mv': mv, 'cur': cur, 'pl_txt': pl_txt})
+        plans = ''.join(
+            '<tr><td class="pos__trg">%s</td><td>%s</td></tr>' % (escape(t), escape(d))
+            for t, d in (p.get('plan') or []))
+        note = p.get('note') or ''
+        cards.append(
+            '<article class="pos-card" id="pos-%s">'
+            '<div class="pos-card__top"><div class="pos-card__id"><b>%s</b><span class="cd">%s</span></div>'
+            '<span class="posv">%s</span><span class="pos__open">%s 建仓</span></div>'
+            '<div class="pos-card__kv">'
+            '<div><dt>持仓 / 计划</dt><dd class="n">%s</dd></div>'
+            '<div><dt>成本</dt><dd class="n">%s</dd></div>'
+            '<div><dt>现价</dt><dd class="n">%s</dd></div>'
+            '<div><dt>市值</dt><dd class="n">%.0f %s</dd></div>'
+            '%s</div>'
+            '<p class="pos__note">%s</p>'
+            '<table class="pos__plan"><thead><tr><th>环节</th><th>触发与动作</th></tr></thead>'
+            '<tbody>%s</tbody></table>'
+            '<a class="lk" href="%s" target="_blank" rel="noopener">观察池报告原文 →</a>'
+            '</article>'
+            % (escape(p['code']), escape(p['name']), escape(p['code']), escape(p.get('strategy', '')),
+               escape(p.get('opened') or ''), shares_txt, cost_html, px_html, mv, cur,
+               pl_html, escape(note), plans,
+               escape((r or {}).get('url') or '#')))
+    ov_rows = ''.join(
+        '<tr class="pos-ov__row" data-code="%s">'
+        '<td class="pos-ov__nm"><b>%s</b><span class="cd">%s</span></td>'
+        '<td><span class="posv">%s</span></td>'
+        '<td class="n">%s</td>'
+        '<td class="n">%s</td>'
+        '<td class="n">%s</td>'
+        '<td class="n">%.0f %s</td>'
+        '<td class="n">%s</td>'
+        '<td class="pos-ov__go">计划 ↓</td></tr>'
+        % (escape(it['code']), escape(it['name']), escape(it['code']), escape(it['strategy']),
+           it['shares_txt'], it['cost_html'], it['px_s'], it['mv'], it['cur'], it['pl_txt'])
+        for it in items)
+    ov_html = ('<div class="pos-ovw"><table class="pos-ov">'
+               '<thead><tr><th>标的</th><th>策略</th><th>持仓</th><th>成本</th>'
+               '<th>现价</th><th>市值</th><th>浮动盈亏</th><th></th></tr></thead>'
+               '<tbody>%s</tbody></table></div>' % ov_rows)
+    sum_pl = total_mv - total_cost
+    cost_scope = '、'.join(it['name'] for it in items if it['pl_txt'].startswith('<span class="is-'))
+    sum_html = ('<div class="pos-sum"><div><dt>持仓标的</dt><dd class="n">%d 只</dd></div>'
+                '<div><dt>总市值</dt><dd class="n">%.0f 元</dd></div>'
+                '<div><dt>在管成本（%s）</dt><dd class="n">%.0f 元</dd></div>'
+                '<div><dt>浮动盈亏（对在管成本）</dt><dd class="n %s">%+.0f 元</dd></div>'
+                '<div><dt>利润仓</dt><dd>%s</dd></div></div>'
+                % (len(positions), total_mv,
+                   escape(cost_scope or '—'), total_cost,
+                   'is-up' if sum_pl >= 0 else 'is-down', sum_pl,
+                   ' · '.join(it['name'] + ' ' + it['cost_html'] for it in items if not it['pl_txt'].startswith('<span class="is-')) or '—'))
+    return ov_html + sum_html + ''.join(cards)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--data', required=True)
@@ -460,9 +625,23 @@ def main():
     ap.add_argument('--records', default='')
     ap.add_argument('--prev-cutoff', default='本轮新增')
     ap.add_argument('--fresh-from', default='')
+    # 现价时点：仅当提供了「实时行情刷新」的台账才传；不传则行为与本改造前完全一致。
+    ap.add_argument('--px-asof', default='')
+    # 持仓数据源：manifest 顶层 positions 段；缺省自动探测脚本同目录的 watchlist_manifest.json
+    ap.add_argument('--manifest', default='')
     a = ap.parse_args()
 
+    man = {}
+    man_path = a.manifest or os.path.join(os.path.dirname(os.path.abspath(__file__)), 'watchlist_manifest.json')
+    if os.path.isfile(man_path):
+        man = json.load(io.open(man_path, encoding='utf-8'))
+    positions = man.get('positions') or []
+    held = {p['code']: p for p in positions}
+
     rows = [enrich(r) for r in json.load(io.open(a.data, encoding='utf-8'))]
+    for r in rows:
+        r['_held'] = r['code'] in held
+    rows_by_code = {r['code']: r for r in rows}
 
     # 全局排序：有量化期望价的在前，按潜在空间降序；无期望价的按报告日降序垫底。
     # 区内顺序沿用该全局序，渲染层不再二次排序（前端 sbtn 只改 DOM 顺序）。
@@ -501,10 +680,13 @@ def main():
                    '<b>当前观察池无一只达到建仓标准。</b>'
                    % (n, n_quant, n_pos, tail))
 
+    # KPI 副标同样按数据生成：现价刷新后「正空间但胜率均 < 30%」等写死说法会失真
+    hint_pos = ('其中 %d 只同时达标' % n_pass) if n_pass else '正空间，但胜率均 &lt; 30%'
+    hint_w30 = ('其中 %d 只期望价高于现价' % n_w30_pos) if n_w30_pos else '期望价均低于现价'
     kpis = [
         ('kpi--plain', str(n), '覆盖标的', '取各标的<strong>最新一版</strong>报告'),
-        ('kpi--up', str(n_pos), '期望价 &gt; 现价', '正空间，但胜率均 &lt; 30%'),
-        ('kpi--plain', str(n_w30), '胜率 ≥ 30%', '期望价均低于现价'),
+        ('kpi--up', str(n_pos), '期望价 &gt; 现价', hint_pos),
+        ('kpi--plain', str(n_w30), '胜率 ≥ 30%', hint_w30),
         ('kpi--plain', str(cnt['N']), '回避 / 不买', '本轮扫描的排除结果'),
         ('kpi--brand', str(fresh_n), escape(a.prev_cutoff), '报告日 ≥ %s' % escape(fresh_from)),
     ]
@@ -521,8 +703,23 @@ def main():
         % (' on' if k == 'all' else '', k, escape(l), v) for k, l, v in chips)
 
     html = TEMPLATE
+    px_asof = (a.px_asof or '').strip()
     repl = {
         '@@ASOF@@': escape(a.asof or '—'),
+        '@@PX_ASOF@@': escape(px_asof or '—'),
+        # 有实时现价时：页头加「现价时点」并高亮；胜率列标注为报告口径（未随实时价重算）
+        '@@PX_SEG@@': (' ｜ 现价时点 <b>%s</b>' % escape(px_asof)) if px_asof else '',
+        '@@ASOF_LABEL@@': '报告数据时点' if px_asof else '数据时点',
+        '@@PX_DL@@': ('<dt>现价与报告的时点差</dt><dd>本页「现价」已刷新至<b>实时行情</b>'
+                      '（时点见页头），<strong>潜在空间与距买点按实时现价重算</strong>；'
+                      '而<strong>期望价、买入胜率、观察买点仍为各报告原文口径</strong> —— '
+                      '其中买入胜率按报告写作时的现价（基准价）计算，未随实时价重算，'
+                      '故与「潜在空间」存在时点差。读两列时须把这一层记在心里，'
+                      '并按各报告的复核有效期决定是否重跑验证点。</dd>') if px_asof else '',
+        '@@PX_FOOT@@': ('报告日期为各报告数据时点；<b>现价为实时行情快照</b>（时点见页头），'
+                        '期望价 / 买入胜率 / 观察买点仍取自报告原文（胜率按报告写作时现价计算，'
+                        '未随实时价重算）。' if px_asof else '报告日期为各报告数据时点，行情为该时点快照。'),
+        '@@WIN_TH@@': ('买入胜率 <span class="th-h">报告口径</span>' if px_asof else '买入胜率'),
         '@@N@@': str(n),
         '@@VERDICT@@': verdict,
         '@@KPIS@@': kpi_html,
@@ -533,9 +730,12 @@ def main():
         '@@ZONES@@': ''.join(zone_block(z, zones[z]) for z, *_ in ZONE_META),
         '@@CALENDAR@@': calendar(rows),
         '@@FRESH_FROM@@': escape(fresh_from),
+        '@@POSITIONS@@': positions_html(positions, rows_by_code),
     }
     for k, v in repl.items():
         html = html.replace(k, v)
+    # @@WIN_TH@@ 位于模块级 THEAD 常量内，随 @@ZONES@@ 一起进入页面，需再补一次替换
+    html = html.replace('@@WIN_TH@@', repl['@@WIN_TH@@'])
 
     io.open(a.out, 'w', encoding='utf-8').write(html)
     print('written %s | %d bytes | %d rows' % (a.out, len(html), n))
@@ -580,6 +780,7 @@ TEMPLATE = r"""<!DOCTYPE html>
   --heat3-bg:#a9c1f2; --heat3-ink:#15307a;
   --dot-off:#e7ebf3; --dot-low:#98a1b3; --dot-mid:#c98a1c; --dot-mid-ink:#8a5c00;
   --chg-bg:#fdf3d6; --chg-ink:#7a5400;
+  --opb-bg:#e8f0fe; --opb-ink:#1d5fbf;
   --mast-a:#131a2e; --mast-b:#1a2547; --mast-c:#22396e;
   --mast-eyebrow:#89a0d6; --mast-glow:rgba(88,128,255,.30);
   --tt-ink:#b7c4e2; --tt-on:#16204a;
@@ -607,6 +808,7 @@ TEMPLATE = r"""<!DOCTYPE html>
   --heat3-bg:#d8bd8a; --heat3-ink:#552f06;
   --dot-off:#e3dccd; --dot-low:#a49a86; --dot-mid:#c0861b; --dot-mid-ink:#7a5200;
   --chg-bg:#f6e8c8; --chg-ink:#6b4500;
+  --opb-bg:#f2e9d8; --opb-ink:#6f4614;
   --mast-a:#231e17; --mast-b:#332a1d; --mast-c:#4a3a22;
   --mast-eyebrow:#c0a878; --mast-glow:rgba(180,140,80,.26);
   --tt-ink:#c9bda6; --tt-on:#2b2419;
@@ -630,6 +832,7 @@ TEMPLATE = r"""<!DOCTYPE html>
   --heat3-bg:#3c5490; --heat3-ink:#e0e9ff;
   --dot-off:#2b323f; --dot-low:#5d6674; --dot-mid:#c98a1c; --dot-mid-ink:#e5b256;
   --chg-bg:#3a2c17; --chg-ink:#e0a952;
+  --opb-bg:#1d2540; --opb-ink:#9db4ff;
   --mast-a:#0e1220; --mast-b:#141b33; --mast-c:#1b2b52;
   --sh1:0 1px 2px rgba(0,0,0,.45); --sh2:0 6px 18px rgba(0,0,0,.55);
 }
@@ -805,6 +1008,60 @@ td.jd .tag{display:inline-block}
 .jd__n{display:block;font-size:var(--fs-xs);color:var(--ink-500);margin-top:3px;line-height:1.5}
 .jd .chg{display:inline-block;margin-top:4px;font-size:10.5px;font-weight:600;color:var(--chg-ink);
   background:var(--chg-bg);border-radius:3px;padding:1px 6px;cursor:help}
+.opb{display:inline-block;margin-left:8px;vertical-align:2px;font-size:10.5px;font-weight:600;
+  color:var(--opb-ink);background:var(--opb-bg);border-radius:3px;padding:1px 6px;cursor:help;
+  max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:none}
+
+/* ── 视图 Tab（观察池 / 持仓与计划） ─────────────────────────────── */
+.vtabs{display:flex;gap:8px;margin:18px 0 0}
+.vtab{appearance:none;border:1px solid var(--line);background:var(--surface);color:var(--ink-500);
+  font:600 var(--fs-sm)/1 var(--font);padding:9px 22px;border-radius:999px;cursor:pointer}
+.vtab.on{background:var(--brand-fill);border-color:var(--brand-fill);color:var(--on-brand)}
+.vtab:not(.on):hover{color:var(--brand);border-color:var(--brand)}
+
+/* ── 持仓与计划 ─────────────────────────────────────────────────── */
+.pos-ovw{background:var(--surface);border:1px solid var(--line);border-radius:var(--r3);
+  overflow:hidden;margin-bottom:var(--s5)}
+.pos-ov{width:100%;border-collapse:collapse;font-size:var(--fs-xs)}
+.pos-ov th{text-align:left;font-weight:600;color:var(--ink-500);padding:9px 12px;
+  border-bottom:1px solid var(--line);background:var(--surface-2)}
+.pos-ov td{padding:10px 12px;border-bottom:1px dashed var(--line-2);color:var(--ink-700)}
+.pos-ov tbody tr:last-child td{border-bottom:none}
+.pos-ov__nm b{display:block;color:var(--ink-900);font-size:var(--fs-sm)}
+.pos-ov__row{cursor:pointer}
+.pos-ov__row:hover td{background:var(--surface-2)}
+.pos-ov__row:hover .pos-ov__go{color:var(--brand-fill)}
+.pos-ov__go{color:var(--brand);white-space:nowrap;font-weight:600;text-align:right}
+.pos-card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r3);
+  padding:var(--s4) var(--s5);margin-bottom:var(--s4);scroll-margin-top:16px}
+.pos-card.flash{animation:posflash 1.5s}
+@keyframes posflash{0%,55%{background:var(--brand-soft);border-color:var(--brand)}100%{}}
+.pos-sum{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:var(--s4);
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--r3);
+  padding:var(--s4) var(--s5);margin-bottom:var(--s5)}
+.pos-sum dt,.pos-card__kv dt,.pos__pl dt{font-size:var(--fs-xs);color:var(--ink-500);margin-bottom:3px}
+.pos-sum dd{font-size:var(--fs-lg);font-weight:700}
+.pos-card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r3);
+  padding:var(--s4) var(--s5);margin-bottom:var(--s4)}
+.pos-card__top{display:flex;align-items:center;gap:var(--s2);flex-wrap:wrap;margin-bottom:var(--s3)}
+.pos-card__id{flex:1;min-width:0}
+.pos-card__id b{font-size:var(--fs-md);color:var(--ink-900)}
+.posv{display:inline-block;font-size:var(--fs-xs);font-weight:700;color:var(--brand);
+  background:var(--brand-soft);border-radius:var(--rp);padding:2px 10px}
+.pos__open{font-size:var(--fs-xs);color:var(--ink-400)}
+.pos-card__kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:var(--s4)}
+.pos-card__kv dd,.pos__pl dd{font-size:var(--fs-md);font-weight:650;color:var(--ink-900)}
+.pos__pl dd span{font-size:var(--fs-xs);font-weight:400;color:var(--ink-500);margin-left:6px}
+.pos__chg{font-size:var(--fs-xs);font-weight:400;color:var(--ink-500);margin-left:4px}
+.pos__note{font-size:var(--fs-xs);color:var(--ink-500);line-height:1.6;margin:var(--s3) 0;
+  padding:var(--s2) var(--s3);background:var(--surface-2);border-radius:var(--r1)}
+.pos__plan{width:100%;border-collapse:collapse;font-size:var(--fs-xs)}
+.pos__plan th{text-align:left;font-weight:600;color:var(--ink-500);padding:6px 10px;
+  border-bottom:1px solid var(--line)}
+.pos__plan td{padding:7px 10px;border-bottom:1px dashed var(--line-2);color:var(--ink-700);line-height:1.55}
+.pos__plan .pos__trg{white-space:nowrap;font-weight:600;color:var(--ink-900);width:7em}
+.pos__plan tbody tr:last-child td{border-bottom:none}
+.pos-empty{color:var(--ink-500);font-size:var(--fs-sm);padding:var(--s5)}
 
 /* 判定标签（色相避开红绿） */
 .tag{display:inline-block;border-radius:var(--rp);padding:2px 9px;font-size:var(--fs-xs);
@@ -926,6 +1183,35 @@ details.notes[open]>summary::before{content:"▾ "}
    键值兼容：首版的 soft / std 两档已合并为「标准」，旧值一律落到 std。 */
 (function(){try{var m={soft:'std',eye:'eye',std:'std',dark:'dark'};
 var t=m[localStorage.getItem('wl-theme')];if(t){document.documentElement.setAttribute('data-theme',t);}}catch(e){}})();</script>
+<script>/* 视图 Tab：持仓与计划（默认）/ 观察池。选择存 localStorage（键 wl-view2），点击切换在此。 */
+(function(){
+  function show(v){
+    document.getElementById('view-pool').hidden = (v !== 'pool');
+    document.getElementById('view-pos').hidden = (v !== 'pos');
+    Array.prototype.forEach.call(document.querySelectorAll('.vtab'), function(b){
+      var on = b.getAttribute('data-v') === v;
+      b.classList.toggle('on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    try{localStorage.setItem('wl-view2', v);}catch(e){}
+  }
+  document.addEventListener('click', function(e){
+    var b = e.target.closest ? e.target.closest('.vtab') : null;
+    if(b){ show(b.getAttribute('data-v')); return; }
+    var tr = e.target.closest ? e.target.closest('.pos-ov__row') : null;
+    if(tr){
+      var card = document.getElementById('pos-' + tr.getAttribute('data-code'));
+      if(card){
+        card.scrollIntoView({behavior:'smooth', block:'start'});
+        card.classList.remove('flash'); void card.offsetWidth; card.classList.add('flash');
+      }
+    }
+  });
+  document.addEventListener('DOMContentLoaded', function(){
+    var v = 'pos';
+    try{ v = localStorage.getItem('wl-view2') || 'pos'; }catch(e){}
+    show(v);
+  });
+})();</script>
 </head>
 <body>
 <div class="page">
@@ -934,7 +1220,7 @@ var t=m[localStorage.getItem('wl-theme')];if(t){document.documentElement.setAttr
   <div class="mast__eyebrow">OBSERVATION POOL · DECISION COCKPIT</div>
   <h1 class="mast__title">投资观察池</h1>
   <p class="mast__sub">
-    覆盖 <b>@@N@@</b> 只标的 ｜ 数据时点 <b>@@ASOF@@</b> ｜ 来源：资料库「投资」空间内各标的<strong>最新一版</strong>分析报告<br>
+    覆盖 <b>@@N@@</b> 只标的 ｜ @@ASOF_LABEL@@ <b>@@ASOF@@</b>@@PX_SEG@@ ｜ 来源：资料库「投资」空间内各标的<strong>最新一版</strong>分析报告<br>
     台账口径：期望价为报告内「折现 + 概率加权」结果；建仓门槛为 潜在空间 ≥ +15% 且买入胜率 ≥ 30%
   </p>
   <div class="tt" role="group" aria-label="配色档位">
@@ -942,6 +1228,12 @@ var t=m[localStorage.getItem('wl-theme')];if(t){document.documentElement.setAttr
   </div>
 </header>
 
+<nav class="vtabs" role="tablist" aria-label="视图切换">
+  <button type="button" class="vtab on" data-v="pos" aria-pressed="true">持仓与计划</button>
+  <button type="button" class="vtab" data-v="pool" aria-pressed="false">观察池</button>
+</nav>
+
+<div id="view-pool">
 <section class="verdict">
   <span class="verdict__ico">i</span>
   <p class="verdict__t">@@VERDICT@@</p>
@@ -994,6 +1286,20 @@ var t=m[localStorage.getItem('wl-theme')];if(t){document.documentElement.setAttr
     @@CALENDAR@@
   </div>
 </section>
+</div>
+
+<div id="view-pos" hidden>
+<section class="panel">
+  <div class="panel__head">
+    <span class="panel__no">P</span>
+    <h2 class="panel__t">持仓与后期计划</h2>
+    <span class="panel__d">实际持仓口径 · 现价与观察池行情联动 · 计划为既定纪律非即时建议</span>
+  </div>
+  <div class="panel__body">
+    @@POSITIONS@@
+  </div>
+</section>
+</div>
 
 <section class="panel">
   <div class="panel__head">
@@ -1016,6 +1322,7 @@ var t=m[localStorage.getItem('wl-theme')];if(t){document.documentElement.setAttr
           <dd>判定是报告原文结论；分区是本页按可操作性所做的排布。<strong>「贴近买点」区按潜在空间 ≥ 0 划分，跨判定桶</strong>——例如科沃斯判定为回避，但期望价 51.86 &gt; 现价 47.80，故归入 A 区，其矛盾本身就是需要关注的信息。判定标签的<strong>文字取自报告结论原文的首个结论词，底色才代表三桶归类</strong>（回避 = 灰蓝 / 观察 = 靛蓝 / 减持 = 琥珀）；同色标签的文字可能不同，以文字为准。</dd>
           <dt>数据边界</dt>
           <dd>B 类为早期「首次覆盖报告」，无期望价与胜率字段，仅列评级与机构目标价；A 类为方法论全管线报告。表中数值一律取自报告原文，报告未给出者留空，<strong>不在渲染层做任何估算</strong>。标「NEW」为本轮新分析（报告日 ≥ @@FRESH_FROM@@）。</dd>
+          @@PX_DL@@
           <dt>变化高亮</dt>
           <dd>与上一期快照比对，判定 / 期望价 / 胜率发生变动时，判定下方显示黄色标记，悬停可看上期判定。</dd>
           <dt>配色档位</dt>
@@ -1042,7 +1349,7 @@ var t=m[localStorage.getItem('wl-theme')];if(t){document.documentElement.setAttr
 
 <div class="foot">
   本台账仅供参考，不构成投资建议。股市有风险，投资需谨慎。<br>
-  数据源：资料库「投资」空间内各标的报告（A 类为方法论全管线报告，B 类为早期首次覆盖报告）；报告日期为各报告数据时点，行情为该时点快照。<br>
+  数据源：资料库「投资」空间内各标的报告（A 类为方法论全管线报告，B 类为早期首次覆盖报告）；@@PX_FOOT@@<br>
   生成方式：由各报告结论区自动抽取 + 人工核对；期望价与胜率口径见各报告原文。单文件离线渲染，零外部依赖。
 </div>
 
