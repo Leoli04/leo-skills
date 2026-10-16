@@ -70,6 +70,31 @@ python screen.py --type value,dividend   # 只跑指定类型
 python assets/verify_report.py "<报告.html>" --skill-dir <stock-analyzer 目录>
 ```
 
+### 📊 fund-etf-review
+
+基金/ETF 评估与文档复评技能。两个场景：①评估「基金/ETF 挑选指南」类方法论文档（多轮迭代复评直到定稿）；②评估**具体单只基金**——从查数到落库一条链全通。
+
+- **功能**（单基金评估七步）：
+  1. 数字口径复算（费率复利拖累、A/C 类盈亏平衡点等，全部脚本化）
+  2. 权威判据完整性（ETF 六项筛选、主动基金四看+硬否决+一触发器、定投纪律）
+  3. **替代品对比**：场内 ETF + 场外联接**双通道缺一不可**（联接基金费率须逐只核实、ETF 无联接须明说）
+  4. **多维对比**：统一窗口的近 1/3 年收益、年化、最大回撤、波动、Sharpe、Calmar + 前十大持仓重叠度（联接写穿透口径）——只比费率 = 对比不完整
+  5. 生成零依赖 HTML 报告（内联 SVG 净值曲线、命名规范、修正声明机制）
+  6. 上传资料库（`--node-block-id` 原地覆盖更新）
+- **触发词**：「评估基金文档」「已修改，再次评估」（基金/ETF 语境）、「评估场外基金 <代码>」等
+- **核心文件**：
+  - `SKILL.md` — 首轮五步 + 复评模式 + 评分锚点（85/93/97）+ 数据源降级路径
+  - `references/checklist.md` — 权威判据清单（文档必备模块、8 条数字复算锚点、9 条常见易错点）
+  - `scripts/verify_math.py` — 复算脚本：`fee-drag`（费率复利 20 年终值差）、`ac-breakeven`（A/C 临界持有期）
+- **依赖**：Python 3 标准库（脚本零第三方依赖）；数据源 neodata → 东财天天基金公开接口降级链
+
+```bash
+# 费率拖累复算：1.5% vs 0.2%，持有 20 年
+python scripts/verify_math.py fee-drag 0.015 0.002 --years 20
+# A/C 类盈亏平衡：申购费 0.10% vs 销售服务费 0.20%/年
+python scripts/verify_math.py ac-breakeven 0.0010 0.0020 --fees 0.0010,0.0015
+```
+
 ## 使用方式
 
 将本仓库克隆后，把对应 skill 目录放入 CodeBuddy 的 skills 目录（`.codebuddy/skills/`），即可通过自然语言触发。
@@ -101,6 +126,10 @@ leo-skills/
 │   ├── SKILL.md
 │   ├── assets/            # HTML 报告模板 + 回查脚本
 │   └── references/        # 方法论 / 红线 / 数据管线 / 配色
+├── fund-etf-review/       # 基金/ETF 评估技能
+│   ├── SKILL.md
+│   ├── references/        # 权威判据清单
+│   └── scripts/           # 费率/临界点复算脚本
 ├── youtube-downloader/    # YouTube 下载技能
 │   ├── SKILL.md
 │   ├── README_zh.md
