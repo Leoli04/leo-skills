@@ -56,9 +56,10 @@ python screen.py --type value,dividend   # 只跑指定类型
 - **触发词**：「分析XX股票」「XX公司全面分析」「XX股票怎么样」「XX值不值得买」「stock analysis」等
 - **输出**：自包含 HTML 文件（Chart.js 图表 + 分页导航 UI）
 - **核心文件**：
-  - `SKILL.md` — 10 步流水线 + Phase 0–10（含 **Phase 9.5 报告内容回查**）
+  - `SKILL.md` — 10 步流水线 + Phase 0–11（**Phase 0a 历史报告检索与评估模式确认** / Phase 0b 口径确认 / **Phase 9.5 报告内容回查** / **Phase 11 观察池台账 + 上传后旧版归档**）
   - `assets/report_template.html` — 生产级 11 节报告模板
   - `assets/verify_report.py` — **报告回查脚本**，自动核验标签配平、版本号、计数、折现/期望价/门槛算术等 19 项
+  - `assets/lib_reports.py` — **资料库历史报告检索 / 旧版归档**（`scan` 只读检索同标的历史版本并给出 `NO_HISTORY` / `HISTORY_FOUND` / `MULTI_VERSION` 结论；`archive` 幂等移入「旧版归档」）
   - `references/methodology.md` — 方法论全文结构速查
   - `references/redlines.md` — 43 条红线 / 26 个陷阱 / 38 项自检
   - `references/data_pipeline.md` — 实测可用的数据管线接口
@@ -66,9 +67,15 @@ python screen.py --type value,dividend   # 只跑指定类型
 - **依赖**：数据检索能力；回查脚本需 Python 3
 
 ```bash
+# 开工前先查资料库有无同标的历史报告（取数之前必跑）
+python assets/lib_reports.py scan --manifest <工作目录>/watchlist_manifest.json \
+  --code 600066 --name 宇通客车
+
 # 报告生成后回查（交付前必跑）
 python assets/verify_report.py "<报告.html>" --skill-dir <stock-analyzer 目录>
 ```
+
+> `lib_reports.py` 依赖 CodeBuddy 内置 `library` skill 的 `space_api.py`（资料库接口），目录可用 `--lib-dir` 或环境变量 `WORKBUDDY_LIBRARY_DIR` 指定；不接资料库时可跳过 Phase 0a。
 
 ### 📊 fund-etf-review
 
