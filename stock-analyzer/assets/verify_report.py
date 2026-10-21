@@ -510,6 +510,217 @@ def check_css_classes(html):
         add("PASS", "CSS 类完整性", f"用到 {len(used)} 个类全部有定义")
 
 
+# ---------------------------------------------------------------- 三项新增（2026-10-21 宇通事故）
+def _plain(html):
+    """剥掉 script/style/标签，压成单行纯文本。"""
+    b = re.sub(r"(?is)<script.*?</script>", " ", html)
+    b = re.sub(r"(?is)<style.*?</style>", " ", b)
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", b))
+
+
+def _stock_ident(report_path):
+    """从文件名解析 (名称, 代码)。解析不出返回 (None, None)。"""
+    base = os.path.basename(report_path or "")
+    m = NAME_STD_RE.match(os.path.splitext(base)[0])
+    if m:
+        return m.group("name"), m.group("code")
+    m = re.search(r"([^\s()（）\-_/]+)[（(](\d{6}|\d{5}\.HK)[）)]", base)
+    if m:
+        return m.group(1), m.group(2)
+    # 旧命名族：名称_代码_类型_日期（如 小商品城_600415_完整范例.html）
+    m = re.search(r"([^\s()（）\-_/]+)_(\d{6}|\d{5}\.HK)_", base)
+    if m:
+        return m.group(1), m.group(2)
+    m = re.search(r"([^\s()（）\-_/]+)-(\d{6})-", base)
+    if m:
+        return m.group(1), m.group(2)
+    return None, None
+
+
+A_SHARE_CODE_RE = re.compile(r"(?<!\d)((?:60|68|00|30|43|83|87|92)\d{4})(?!\d)")
+# 引用同业时常见的上下文词：命中即视为合理引用，不判污染
+PEER_CTX = ("对比", "同业", "可比", "同行", "竞品", "对手", "参照", "vs", "VS",
+            "同期", "相比", "高于", "低于", "龙头", "三家", "系", "与", "持有",
+            "参股", "控股", "子公司", "对标", "板块", "指数", "ETF", "LOF", "上游",
+            "下游", "供应商", "客户", "渠道", "同门", "关联")
+
+
+def check_cross_stock_contamination(html, report_path):
+    """跨标的污染：页脚 / 数据说明 / 免责声明里残留别的标的。
+
+    真实事故：宇通报告整份页脚是汤臣倍健的（9.55 元 / 16.917 亿股 / 161.56 亿市值 /
+    PE 24.93 / 销售费用率 / 线下渠道 / 汤臣倍健自己的验证点编号），而外链、图片、
+    DOCTYPE 三项自检全绿 —— 页脚是纯文本，无外链无图片，结构也完整，常规检查抓不到。
+    """
+    name, code = _stock_ident(report_path)
+
+    # ① 页脚区域：任何非本标的的 A 股代码都算污染
+    foot = ""
+    m = re.search(r"(?is)<footer\b.*?</footer>", html)
+    if m:
+        foot = m.group(0)
+    else:
+        m = re.search(r'(?is)<div[^>]*class\s*=\s*["\'][^"\']*footer[^"\']*["\'][^>]*>.*?</div>\s*</div>', html)
+        if m:
+            foot = m.group(0)
+        else:
+            foot = html[-6000:]
+    foot_text = _plain(foot)
+    foot_codes = sorted(set(A_SHARE_CODE_RE.findall(foot_text)))
+    bad_foot = [c for c in foot_codes if code and c != code.split(".")[0]]
+    # 页脚里的「名称（代码」也不得是别家
+    for nm, cd in re.findall(r"([\u4e00-\u9fa5A-Za-z]{2,10})\s*[（(]\s*(\d{6})(?:\.\w{2})?\s*[）)]", foot_text):
+        if code and cd != code.split(".")[0] and cd not in bad_foot:
+            bad_foot.append(cd)
+    if bad_foot:
+        add("FAIL", "跨标的污染（页脚）",
+            f"页脚出现非本标的代码 {', '.join(bad_foot)}（本标的 {code or '未能解析'}）—— 模板从别家报告复制后未换，须整段重写页脚")
+    else:
+        add("PASS", "跨标的污染（页脚）", f"本标的 {name or '?'}({code or '?'})，页脚无他股代码")
+
+    # ② 正文：出现「别家名称（代码）」且不在同业对比语境里 → WARN
+    body_text = _plain(html)
+    sus = []
+    for nm, cd in re.findall(r"([\u4e00-\u9fa5A-Za-z]{2,10})\s*[（(]\s*(\d{6})(?:\.\w{2})?\s*[）)]", body_text):
+        if not code or cd == code.split(".")[0]:
+            continue
+        if name and nm == name:
+            continue
+        pos = body_text.find(nm + "（" ) if (nm + "（") in body_text else body_text.find(nm + "(")
+        ctx = body_text[max(0, pos - 80): pos + 40] if pos > 0 else ""
+        if any(k in ctx for k in PEER_CTX):
+            continue
+        sus.append(f"{nm}({cd})")
+    if sus:
+        add("WARN", "跨标的污染（正文）",
+            f"疑似他股引用未注明同业语境：{'、'.join(sorted(set(sus))[:6])} —— 若是同业对比请补上下文词")
+    else:
+        add("PASS", "跨标的污染（正文）", "无非同业语境的别家标的引用")
+
+
+def check_scenario_dividend(html):
+    """三情景折现价是否计入持有期股息（或明确声明未计）。
+
+    真实事故：宇通股息率 8.96%、持有 1 年，三情景折现价只折终值、不含股息 →
+    期望价 32.58 被低估为 30.52，恰好落在门槛 32.09 两侧，胜率从 75% 误报 25%，
+    结论方向被翻转。而同报告 ⑥ 节的 DDM 完全基于股息驱动，两者还被并列进
+    「四种估值方法对照」表比大小 —— 口径不同的两个数不可比。
+    """
+    text = _plain(html)
+
+    # 股息率（取第一个 0<r<30 的，排除「股息率 ≥ 9.8%」这类判定阈值里的数）
+    div_yield = None
+    for m in re.finditer(r"股息率[^0-9]{0,12}([\d.]+)\s*%", text):
+        v = float(m.group(1))
+        if 0 < v < 30:
+            div_yield = v
+            break
+
+    # 三情景区域：折现价出现位置附近 ±4000 字符
+    lo = hi = -1
+    for m in re.finditer(r"折现价", text):
+        lo = max(0, m.start() - 4000) if lo < 0 else lo
+        hi = m.start() + 4000
+    window = text[lo:hi] if lo >= 0 else text
+
+    decl = [k for k in ("PV 股息", "PV股息", "持有期股息", "含股息", "股息含权",
+                        "未含股息", "不含股息", "仅计价格回报", "只计价格回报")
+            if k in window]
+    if decl:
+        add("PASS", "三情景股息项", f"已声明：{'/'.join(decl[:2])}")
+    elif div_yield is not None and div_yield >= 3:
+        add("FAIL", "三情景股息项",
+            f"股息率 {div_yield}% 属高股息，三情景折现价未见股息项或「仅计价格回报」声明 —— "
+            f"须加「PV 股息」列/行内注，否则期望价系统性低估")
+    elif div_yield is None:
+        add("WARN", "三情景股息项", "未抓到股息率，无法判断是否需计股息；若有 DDM 须自行核对同口径")
+    else:
+        add("WARN", "三情景股息项",
+            f"股息率 {div_yield}% 低于 3% 门槛，可省股息，但表下应明写「仅计价格回报，未含股息」")
+
+
+def check_conclusion_consistency(html):
+    """结论数字跨位置同值：页头 hero 结论条 vs 正文众数。
+
+    真实事故：正文全部改成「期望价 30.52 / 胜率 25% / 买点 25.50–26.50」，
+    页头 hero 结论条仍写「29.4 / 20% / 24.50–25.50」，同一页自相矛盾。
+    门禁当时 20 项全绿 —— 它只验组件存在与算术自洽，不验跨位置同值。
+
+    实现要点（2026-10-21 第二版，第一版误报率过高）：**只比对结构化的 hero 区块**
+    （`<span class="vb-k">标签</span><span class="vb-v…">值</span>` 配对），
+    不做全篇扫描。原因：正文里「加权期望价」会被大量派生语境复用 ——
+    「加权期望价降至约 26.3 元」「只从 31.69 元动到 29.19 元」「下降约 0.45 元」
+    「升到约 39.10 元」—— 全篇扫描会把它们全判成冲突（中国巨石、海康威视实测误报）。
+    基准取正文里出现次数最多的那个值；hero 抓不到结构的报告直接跳过。
+    """
+    text = _plain(html)
+
+    # ① 正文基准：出现次数最多的「期望价 / 胜率」值
+    DERIV = ("上沿", "下沿", "降至", "升至", "降到", "升到", "动到", "下降约", "上升约",
+             "约 ", "前次", "上一版", "旧版", "复盘", "修订前")
+
+    def mode_of(pat):
+        from collections import Counter
+        cnt = Counter()
+        for m in pat.finditer(text):
+            seg = m.group(0)
+            if any(g in seg for g in ("≥", "≤", "<", ">", "门槛", "要求", "标准")):
+                continue
+            ctx = text[max(0, m.start() - 60): min(len(text), m.end() + 20)]
+            if any(d in ctx for d in DERIV):
+                continue      # 敏感性 / 情景重分配 / 复盘对照里的派生值，不作基准
+            try:
+                cnt[round(float(m.group(1)), 2)] += 1
+            except (ValueError, IndexError):
+                pass
+        if not cnt or cnt.most_common(1)[0][1] < 2:
+            return None       # 出现不足 2 次的，不足以当基准（长鑫科技实测：唯一一次是「上沿」）
+        return cnt.most_common(1)[0][0]
+
+    exp_mode = mode_of(re.compile(r"加权期望价[^0-9]{0,12}([\d.]+)\s*元"))
+    win_mode = mode_of(re.compile(r"买入胜率[^0-9]{0,12}(\d{1,3})\s*%"))
+
+    # ② hero 结论条：只认 vb-k / vb-v 结构化配对
+    hero = {}
+    for m in re.finditer(
+            r'<span[^>]*class\s*=\s*["\'][^"\']*\bvb-k\b[^"\']*["\'][^>]*>\s*([^<]+?)\s*</span>\s*'
+            r'<span[^>]*class\s*=\s*["\'][^"\']*\bvb-v\b[^"\']*["\'][^>]*>\s*([^<]+?)\s*</span>',
+            html):
+        label, val = m.group(1), m.group(2)
+        num = re.search(r"([\d.]+)", val)
+        if not num:
+            continue
+        v = round(float(num.group(1)), 2)
+        # 精确匹配标签：「胜率档位」「期望价 × 胜率交叉校验」这类不是结论数字
+        lab = re.sub(r"[\s×xX*（）()]+", "", label)
+        if lab in ("加权期望价", "折现后期望价", "期望价"):
+            hero["exp"] = v
+        elif lab == "买入胜率":
+            hero["win"] = v
+
+    if not hero:
+        add("PASS", "结论数字跨位置同值",
+            "无 vb-k/vb-v 结构化结论条，跳过（旧模板报告）；有则须人工核对 hero 与正文")
+        return
+
+    bad, ok = [], []
+    for key, label, mode, tol in (("exp", "期望价", exp_mode, 0.05),
+                                  ("win", "胜率", win_mode, 1.0)):
+        if key not in hero or mode is None:
+            continue
+        if abs(hero[key] - mode) > tol:
+            bad.append(f"hero {label} {hero[key] if label == '期望价' else int(hero[key])} "
+                       f"≠ 正文 {mode if label == '期望价' else int(mode)}")
+        else:
+            ok.append(f"{label} {mode if label == '期望价' else int(mode)} 一致")
+
+    if bad:
+        add("FAIL", "结论数字跨位置同值",
+            "；".join(bad) + " —— hero 结论条漏改（改期望价/胜率时最易漏的一处）")
+    else:
+        add("PASS", "结论数字跨位置同值", "；".join(ok) if ok else "hero 值均与正文一致")
+
+
 # ---------------------------------------------------------------- 主流程
 def check_section_depth(html, skill_dir, report_path):
     """逐节内容量对照 examples/ 范例，任一节 < 范例同节 70% 即 FAIL。
@@ -699,6 +910,9 @@ def main():
     check_sourced(html)
     check_cdn(html)
     check_css_classes(html)
+    check_cross_stock_contamination(html, args.report)
+    check_scenario_dividend(html)
+    check_conclusion_consistency(html)
     check_section_depth(html, _resolve_skill_dir(args.skill_dir), args.report)
     check_named_components(html, _resolve_skill_dir(args.skill_dir), args.report)
 
@@ -719,7 +933,7 @@ def main():
     if fails:
         print("\n✗ 存在 FAIL，逐项修正后重跑；机器验不了的口径与逻辑仍需人工读。")
     else:
-        print("\n✓ 机器可验项全部通过。仍需人工确认：Phase 9.5 第二遍 11 条（见 SKILL.md）。")
+        print("\n✓ 机器可验项全部通过。仍需人工确认：Phase 9.5 第二遍 14 条（见 SKILL.md）。")
     return 1 if fails else 0
 
 
