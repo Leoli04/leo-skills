@@ -534,6 +534,11 @@ def _stock_ident(report_path):
     m = re.search(r"([^\s()（）\-_/]+)-(\d{6})-", base)
     if m:
         return m.group(1), m.group(2)
+    # 旧命名族：名称与代码直接相连（如 三环集团300408_投资分析报告_2026-10-12.html）
+    # 不补这条，_stock_ident 返回 (None, None)，跨标的污染检查会静默 PASS 而失去防护。
+    m = re.search(r"([^\s()（）\-_/0-9A-Za-z]+)(\d{6}|\d{5}\.HK)(?=[_（(.\-]|$)", base)
+    if m:
+        return m.group(1), m.group(2)
     return None, None
 
 
@@ -543,6 +548,21 @@ PEER_CTX = ("对比", "同业", "可比", "同行", "竞品", "对手", "参照"
             "同期", "相比", "高于", "低于", "龙头", "三家", "系", "与", "持有",
             "参股", "控股", "子公司", "对标", "板块", "指数", "ETF", "LOF", "上游",
             "下游", "供应商", "客户", "渠道", "同门", "关联")
+
+
+def _is_single_stock_report(report_path):
+    """是否「单标的深度研报」—— 只有这类产物才要求页脚不含他股代码。
+
+    基金评估 / ETF 对比 / 横向筛查类产物的页脚会合法列举联接基金、成分股、同业标的的
+    代码（真实误报：国泰国证食品饮料(160222) 页脚写「替代品表补全场外联接基金
+    （001631 / 013125 / 013126）」，被判成模板污染 FAIL）。
+    """
+    stem = os.path.splitext(os.path.basename(report_path or ""))[0]
+    if any(k in stem for k in ("基金", "ETF", "LOF", "指数", "联接")):
+        return False
+    if any(k in stem for k in NAME_NON_STOCK_KW):
+        return False
+    return ("投资分析报告" in stem) or ("深度" in stem) or bool(NAME_STD_RE.match(stem))
 
 
 def check_cross_stock_contamination(html, report_path):
@@ -573,8 +593,12 @@ def check_cross_stock_contamination(html, report_path):
         if code and cd != code.split(".")[0] and cd not in bad_foot:
             bad_foot.append(cd)
     if bad_foot:
-        add("FAIL", "跨标的污染（页脚）",
-            f"页脚出现非本标的代码 {', '.join(bad_foot)}（本标的 {code or '未能解析'}）—— 模板从别家报告复制后未换，须整段重写页脚")
+        if _is_single_stock_report(report_path):
+            add("FAIL", "跨标的污染（页脚）",
+                f"页脚出现非本标的代码 {', '.join(bad_foot)}（本标的 {code or '未能解析'}）—— 模板从别家报告复制后未换，须整段重写页脚")
+        else:
+            add("WARN", "跨标的污染（页脚）",
+                f"页脚出现其他标的代码 {', '.join(bad_foot)} —— 非单标的研报产物（基金/对比/筛查类），页脚合法列举关联代码，本项不作 FAIL；若为单标的报告请改名后重跑")
     else:
         add("PASS", "跨标的污染（页脚）", f"本标的 {name or '?'}({code or '?'})，页脚无他股代码")
 
