@@ -14,9 +14,12 @@ verify_report.py — Stock Analyzer 报告内容回查脚本（机器可验部�
 """
 
 import argparse
+import json
 import os
 import re
+import subprocess
 import sys
+import tempfile
 
 # ---------------------------------------------------------------- 计数基准
 # 这三组数字由 references/redlines.md 的「故为 X / Y / Z」行自动解析得到。
@@ -904,6 +907,157 @@ def check_named_components(html, skill_dir, report_path):
         add("PASS", "具名组件完整性", f"{len(SIG)} 个具名组件全部命中")
 
 
+# ------------------------------------------------------- 内联 JS 语法编译
+# 背景（2026-10-23 立）：全库 98 只里查出 7 只图表全空，其中 688197 门禁
+# PASS 29 / FAIL 0 却 0 张图 —— 既有检查只验静态特征与 canvas 数量，对 JS
+# 语法错误零覆盖。一处语法错就让整个 <script> 块失效，表现为「图全空 +
+# showSection is not defined」，而 HTML 结构、章节密度、具名组件全都正常。
+JS_BLOCK_MIN_CHARS = 30
+
+_JS_CHECK_MJS = r"""import { readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import vm from 'node:vm'
+
+const dir = process.argv[2]
+const out = []
+for (const f of readdirSync(dir).filter(x => x.endsWith('.js')).sort()) {
+  const body = readFileSync(join(dir, f), 'utf8')
+  try {
+    new vm.Script(body, { filename: f })
+    out.push({ file: f, ok: true, len: body.length })
+  } catch (e) {
+    const st = String(e.stack || e)
+    const mm = st.match(/[^\n]*?:(\d+)\n/)
+    const line = mm ? parseInt(mm[1], 10) : 0
+    const lines = body.split('\n')
+    const ctx = line > 0 ? (lines[Math.min(lines.length - 1, line - 1)] || '').trim().slice(0, 150) : ''
+    out.push({ file: f, ok: false, len: body.length, msg: String(e).split('\n')[0], line, ctx })
+  }
+}
+console.log(JSON.stringify(out))
+"""
+
+
+def _find_node():
+    """定位 node 可执行文件：$NODE_BIN > PATH > 托管运行时目录。找不到返回 None。"""
+    cands = []
+    if os.environ.get("NODE_BIN"):
+        cands.append(os.environ["NODE_BIN"])
+    cands.append("node")
+    home = os.path.expanduser("~")
+    for ver in ("22.22.2-6", "22.12.0", "20.16.0"):
+        cands.append(os.path.join(home, ".workbuddy", "binaries", "node",
+                                  "versions", ver, "node.exe"))
+    for c in cands:
+        try:
+            r = subprocess.run([c, "-v"], capture_output=True, text=True, timeout=20)
+            if r.returncode == 0 and (r.stdout or "").strip().startswith("v"):
+                return c
+        except Exception:
+            continue
+    return None
+
+
+def _inline_script_blocks(html):
+    """提取内联 script 块（跳过外链与平台注入的 inject.js）。"""
+    out = []
+    for m in re.finditer(r"<script([^>]*)>([\s\S]*?)</script>", html, re.I):
+        attrs, body = m.group(1) or "", m.group(2) or ""
+        if re.search(r"\bsrc\s*=", attrs, re.I):
+            continue
+        if "page_comm/inject" in attrs:
+            continue
+        if len(body.strip()) < JS_BLOCK_MIN_CHARS:
+            continue
+        out.append((m.start(), body))
+    return out
+
+
+def check_js_syntax(html):
+    """内联 JS 语法编译（node vm.Script）。语法错 = 整块失效 = 图表全空，一律 FAIL。"""
+    blocks = _inline_script_blocks(html)
+    if not blocks:
+        add("WARN", "内联 JS 语法", "未检出内联 script 块，跳过")
+        return
+    node = _find_node()
+    if not node:
+        add("WARN", "内联 JS 语法",
+            "未找到 node（可用 $NODE_BIN 指定），跳过 —— 该项需人工用浏览器确认图表渲染")
+        return
+
+    tmp = tempfile.mkdtemp(prefix="vrfy_js_")
+    try:
+        for i, (_pos, body) in enumerate(blocks):
+            p = os.path.join(tmp, "blk%d.js" % i)
+            with open(p, "w", encoding="utf-8", newline="\n") as f:
+                f.write(body)
+        script = os.path.join(tmp, "check.mjs")
+        with open(script, "w", encoding="utf-8", newline="\n") as f:
+            f.write(_JS_CHECK_MJS)
+        r = subprocess.run([node, script, tmp], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=300)
+        raw = (r.stdout or "").strip().splitlines()
+        if not raw:
+            add("WARN", "内联 JS 语法", "编译脚本无输出：" + (r.stderr or "")[:120])
+            return
+        rows = json.loads(raw[-1])
+    except Exception as e:
+        add("WARN", "内联 JS 语法", "跳过（%s）" % str(e)[:100])
+        return
+    finally:
+        try:
+            for f in os.listdir(tmp):
+                os.remove(os.path.join(tmp, f))
+            os.rmdir(tmp)
+        except Exception:
+            pass
+
+    bad = [x for x in rows if not x.get("ok")]
+    if bad:
+        parts = []
+        for x in bad[:3]:
+            parts.append("块#%s L%s %s｜%s" % (
+                (x.get("file") or "?").replace("blk", "").replace(".js", ""),
+                x.get("line") or "?", x.get("msg") or "", (x.get("ctx") or "")[:70]))
+        more = "" if len(bad) <= 3 else "；等 %d 块" % len(bad)
+        add("FAIL", "内联 JS 语法",
+            "语法错导致整块失效（图表会全空）：" + " ｜ ".join(parts) + more)
+    else:
+        add("PASS", "内联 JS 语法",
+            "%d 个内联块编译通过（共 %d 字符）" % (len(rows), sum(x.get("len", 0) for x in rows)))
+
+
+def check_html_parse_hazards(html):
+    """HTML 解析陷阱：正文未转义 RCDATA 标签、重复 <script> 开标签、script 未配平。
+
+    背景（2026-10-23 立）：600694 自检清单正文写了字面量 <title>，浏览器据此进入
+    RCDATA 模式，把其后全部内容（含 200KB Chart.js 与图表逻辑）当纯文本吞掉 ——
+    DOM 里 <script> 数量为 0，17 张图全空，而文件字节、章节、canvas 标签全都正常。
+    """
+    hz = []
+    # ① 正文（首个 </head> 之后）出现未转义的 RCDATA 开标签
+    low = html.lower()
+    head_end = low.find("</head>")
+    body = html[head_end + 7:] if head_end >= 0 else html
+    for kw in ("<title", "<textarea", "<xmp"):
+        n = body.lower().count(kw)
+        if n:
+            hz.append("正文含未转义 %s> ×%d（会触发 RCDATA 吞掉其后脚本）" % (kw, n))
+    # ② 重复 <script> 开标签（<script><script>...）
+    n_rep = len(re.findall(r"<script[^>]*>\s*<script", html, re.I))
+    if n_rep:
+        hz.append("重复 <script> 开标签 ×%d" % n_rep)
+    # ③ script 开闭未配平
+    n_open = len(re.findall(r"<script\b", html, re.I))
+    n_close = len(re.findall(r"</script\s*>", html, re.I))
+    if n_open != n_close:
+        hz.append("<script> 未配平（开 %d / 闭 %d）" % (n_open, n_close))
+    if hz:
+        add("FAIL", "HTML 解析陷阱", "；".join(hz))
+    else:
+        add("PASS", "HTML 解析陷阱", "<script> 配平，正文无 RCDATA 标签")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Stock Analyzer 报告内容回查")
     ap.add_argument("report", help="报告 HTML 路径")
@@ -933,6 +1087,8 @@ def main():
     check_placeholders(html, is_template=is_tpl)
     check_sourced(html)
     check_cdn(html)
+    check_js_syntax(html)
+    check_html_parse_hazards(html)
     check_css_classes(html)
     check_cross_stock_contamination(html, args.report)
     check_scenario_dividend(html)
