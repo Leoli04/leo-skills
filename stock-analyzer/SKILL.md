@@ -47,6 +47,8 @@ agent_created: true
 
 **收尾必做**：每次交付一份新报告后，除 Phase 9.5 回查外，还要执行 Phase 11 的两件事 —— ① 把该标的结论同步进观察池台账（台账是跨报告的唯一汇总口径，漏更新等于让结论重新变孤立）；② 若「个股报告」里同标的新老并存，**把旧版移入「旧版归档」**，库内只留最新一版。
 
+★**两者都必须有机器判据，不许只凭「我记得做过了」收工**：归档跑 `lib_reports.py audit` 必须 `AUDIT_RESULT: CLEAN`；台账跑 `assets/watchlist/check_ledger_gap.py` 必须 `LEDGER_GAP_RESULT: CLEAN`。**报告上传 ≠ 交付完成，出口还差台账那一行。**（2026-10-21 教训：本句写在这里已有明文，但当时只有人工声明、没有校验脚本，一天内漏了 4 只 —— 建滔 01888 / 华测 300012 从未入池、浙江荣泰 603119 被并发重建吃掉、宇通 600066 的行停在修订前。**能被验证的规则才会被执行**。）
+
 ---
 
 ## 使用顺序（不可颠倒）
@@ -709,6 +711,7 @@ python <skill>/assets/verify_report.py "<报告.html>" --skill-dir <skill>
 - 「无结论横条(需人工核对)」清单逐份核对并写入 overrides
 - 三桶计数与统计卡一致；`◆` 变化标记只在真的与上期不同时出现
 - 渲染后跑一次外链扫描（第三方 http(s) 资源数必须为 0）与 JS 语法检查
+- **`LEDGER_GAP_RESULT: CLEAN`** —— 上传前后各跑一次 `assets/watchlist/check_ledger_gap.py --root <工作目录> --pull`。它把「本地根目录报告代码集」与「实测库端台账 `data-k` 代码集」做差集：`MISSING`（有报告无行）/ `STALE`（台账胜率 ≠ 报告胜率）/ `EXTRA`。**差集非空或胜率不一致，不得说「已完成」**。此项替代不了人工核对数值，但能兜住「根本没加行」和「加了但数是旧的」这两类。★`STALE` 只认胜率：胜率随模型修订变、不随股价变；`data-up` 会被「全池换价」按当日收盘重算，拿它判会全表误报（实测 104 只仅命中 1 只、其余 100 行零误报）
 - **Phase 0a 已执行、评估模式已确认**（检索输出 + 用户的选择见当日 memory 日志）—— 这是唯一能证明「没有绕过模式确认」的凭据，日志里缺这一条即视为未做
 - **同标的库内只剩 1 版** —— 上传后重扫 `lib_reports.py scan` 的输出必须是 `HISTORY_FOUND`，不得是 `MULTI_VERSION`；被归档的旧版 `node_id` 已记进日志
 - **全库无多版本残留** —— 归档动作做完后重跑 `lib_reports.py audit`，输出必须是 `AUDIT_RESULT: CLEAN`（`NEEDS_ACTION` 说明还有漏网）
@@ -751,6 +754,7 @@ python lib_reports.py archive --manifest <...> --node-id <旧版 id> --dry-run
 - `build_watchlist.py` —— 从 manifest 指定的报告里抽取结论字段，产出 `ledger_final.json`；带 `--prev` 时与上期快照比对生成「◆ 判定/期望价/胜率变化」标记，并把当前结果写回作为下期基线。同时打印自检清单（无判定 / A 类缺现价 / 缺链接 / 无结论横条需人工核对）。
 - `refresh_prices.py` —— **可选**：把现价刷成实时行情产出 `ledger_live.json`（渲染配 `--px-asof`）；**只改现价，期望价 / 胜率 / 观察买点不动**。细则见 `references/ledger_ops.md`「台账命名与现价刷新口径」。
 - `render_watchlist.py` —— 渲染零依赖离线 HTML 台账。**⚠️ 库端台账含「持仓与计划」Tab 时（manifest `positions` 段，2026-10-16 起），不得用本地整页渲染覆盖上传，须走库端行级补丁**；其余细则见 `references/ledger_ops.md`。
+- `check_ledger_gap.py` —— **台账的 audit**：本地根目录报告代码集 vs 库端台账 `data-k` 代码集，输出 `MISSING / STALE / EXTRA` 与 `LEDGER_GAP_RESULT: CLEAN|NEEDS_ACTION`（退出码 0/1/2）。支持 `--pull`（先拉最新库端台账）、`--ledger`（指定快照）、`--quiet`（只出结论行）。**每轮报告交付收尾必跑，`NEEDS_ACTION` 时不许报完成。** `STALE` 判据用胜率而非潜在空间，理由见脚本 docstring。
   - **配色三档**：标准（默认，卡面 `#f8fafc`）/ 护眼（暖纸低蓝光，卡面 `#f7f4ec`）/ 深色（夜间，卡面 `#1a1f28`）。切换器在 masthead 右上角，选择存 localStorage 键 `wl-theme`，`<head>` 内联脚本提前套用以防深色档闪白（FOUC）。三档共用同一套语义色，定义在 `:root`（= 标准档）/ `:root[data-theme="eye"]` / `:root[data-theme="dark"]`；标准档无独立覆盖块，`data-theme="std"` 时继承 `:root` 即该档效果。旧键值 `soft` 由 `<head>` 预置脚本映射为 `std`（首版「柔和 / 标准 / 深色」中的纯白档已并入标准档）。
   - 新增语义变量（2026-10-09 三档改造时补）：`--mast-eyebrow` / `--mast-glow` / `--tt-ink` / `--tt-on` —— masthead 上的 eyebrow 文字、右上角光晕、切换器按钮的常态与选中字色。原先这四处是硬编码，护眼档（暖褐头部）下蓝色会与整体暖调冲突。
   - ⚠️ **改配色时的硬约束**：任何"实心块背景"或"热力/弱化色"都必须走语义变量，**不可直接拿 `var(--ink-900)` 当背景**——深色档下 `--ink-900` 是近白色，配 `#fff` 文字会成白底白字。已备好的语义变量：`--solid`/`--on-solid`（排序选中态）、`--brand-fill`/`--on-brand`（chip 选中态，与当文字用的 `--brand` 分开取值，否则深色档浅蓝底白字只有约 2.5:1）、`--heat1~3-bg`/`--heat1~3-ink`（赔率矩阵）、`--dot-off`/`--dot-low`/`--dot-mid`/`--dot-mid-ink`（胜率点阵）、`--chg-bg`/`--chg-ink`（变化高亮）、`--mast-a/b/c`（头部渐变）。新增档位时对照这套清单逐项给值。
