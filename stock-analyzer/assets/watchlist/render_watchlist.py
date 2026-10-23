@@ -51,6 +51,51 @@ ZONE_META = [
      None),
 ]
 
+# ── 结语文案模板（2026-10-23 立）─────────────────────────────────────────
+# 页内「刷新现价」要重算结语，若 JS 里另写一套措辞，两处必然漂移。
+# 故文案只在此定义一次：Python 用 .format() 渲染首屏，同一份模板串也塞进页面
+# （wl-model.tpl），JS 只做数字替换，不持有任何文字。
+V_T_PASS = ('覆盖 <b>{n}</b> 只标的，其中 <b>{nq}</b> 只具备量化期望价。'
+            '<span class="hl-up">{npos} 只</span>期望价高于现价（正空间），'
+            '且其中 <span class="hl-up">{npass} 只</span>同时满足'
+            '「潜在空间 ≥ +15% 且胜率 ≥ 30%」的建仓门槛。')
+V_T_ZERO = ('覆盖 <b>{n}</b> 只标的，其中 <b>{nq}</b> 只具备量化期望价。'
+            '<span class="hl-up">{npos} 只</span>期望价高于现价（正空间），'
+            '但 <b>0 只</b>同时满足「潜在空间 ≥ +15% 且胜率 ≥ 30%」的建仓门槛；{tail}'
+            '<b>当前观察池无一只达到建仓标准。</b>')
+V_T_TAIL0 = '{nw30} 只胜率 ≥ 30%，但其期望价均低于现价。'
+V_T_TAIL1 = ('{nw30} 只胜率 ≥ 30%，其中 {nw30pos} 只期望价高于现价，'
+             '但仍未同时达到 +15% 门槛。')
+V_T_HINT_P = '其中 {npass} 只同时达标'
+V_T_HINT_P0 = '正空间，但胜率均 &lt; 30%'
+V_T_HINT_W = '其中 {nw30pos} 只期望价高于现价'
+V_T_HINT_W0 = '期望价均低于现价'
+Z_T_DESC_IN = '期望价高于现价（潜在空间 ≥ 0）；其中 {nin} 只现价已进入观察买点区间'
+Z_T_DESC_OUT = '期望价高于现价（潜在空间 ≥ 0）；尚未进入观察买点区间'
+Z_T_DESC_NEG = '；另有 {nneg} 只空间已转负（分区为快照口径，需重渲台账重新分区）'
+Z_T_DESC_GAIN = '；另有 {ngain} 只空间已转正、但仍列在下方分区（同上，需重渲台账重新分区）'
+Z_T_NOTE_OK = ('上行空间为正；其中 {nok} 只同时满足「潜在空间 ≥ +15% 且胜率 ≥ 30%」的建仓门槛，'
+               '另有 {rest} 只胜率达标但空间未达门槛。仍须回到报告原文逐个核验证点。')
+Z_T_NOTE_HI = ('上行空间为正，且已有 {nhi} 只胜率 ≥ 30%，但空间均未达 +15% 门槛，'
+               '尚不构成建仓信号。')
+Z_T_NOTE_NO = '上行空间为正，但胜率均低于 30%，尚不构成建仓信号。'
+SP_T_FOOT = ('0 轴右侧为「期望价高于现价」；建仓门槛为潜在空间 ≥ +15% 且胜率 ≥ 30%，'
+             '<b class="hl-up">本轮 {npass} 只达标</b>。分档左闭右开，如 −5.0% 计入「−5 ~ 0」档。')
+SP_T_FOOT0 = ('0 轴右侧为「期望价高于现价」；建仓门槛为潜在空间 ≥ +15% 且胜率 ≥ 30%'
+              '（本轮 0 只达标）。分档左闭右开，如 −5.0% 计入「−5 ~ 0」档。')
+MX_T_FOOT = ('右上角（高胜率 × 正空间）<b class="hl-up">有 {hi} 只</b> —— '
+             '即全池存在「胜率与赔率同时达标」的标的，见各区名单。')
+MX_T_FOOT0 = '右上角（高胜率 × 正空间）为空 —— 即全池不存在「胜率与赔率同时达标」的标的。'
+
+TPL_BAG = {
+    'vpass': V_T_PASS, 'vzero': V_T_ZERO, 'vtail0': V_T_TAIL0, 'vtail1': V_T_TAIL1,
+    'hintp': V_T_HINT_P, 'hintp0': V_T_HINT_P0, 'hintw': V_T_HINT_W, 'hintw0': V_T_HINT_W0,
+    'zdesc_in': Z_T_DESC_IN, 'zdesc_out': Z_T_DESC_OUT, 'zdesc_neg': Z_T_DESC_NEG,
+    'zdesc_gain': Z_T_DESC_GAIN,
+    'znote_ok': Z_T_NOTE_OK, 'znote_hi': Z_T_NOTE_HI, 'znote_no': Z_T_NOTE_NO,
+    'spfoot': SP_T_FOOT, 'spfoot0': SP_T_FOOT0, 'mxfoot': MX_T_FOOT, 'mxfoot0': MX_T_FOOT0,
+}
+
 
 # ── 基础工具 ──────────────────────────────────────────────────────────
 def _f(x):
@@ -81,6 +126,26 @@ def parse_obs(s):
         return None, None
     vals = [float(x) for x in nums]
     return min(vals), max(vals)
+
+
+def px_secid(code):
+    """台账代码 → 腾讯行情 secid。页内「刷新现价」按钮用它拼请求，
+    JS 侧有一份同规则的镜像实现（secid()），改动须两处同步。
+
+    前缀实测（2026-10-23）：沪 sh600415 / 深 sz000538 / 港 hk01810 / 北 bj920429
+    全部可用，返回 `v_<secid>="…"` 形式的 JS 赋值，当普通 script 标签加载即绕过 CORS。
+    """
+    c = (code or '').strip().upper()
+    if c.endswith('.HK'):
+        return 'hk' + re.sub(r'\D', '', c).zfill(5)
+    d = re.sub(r'\D', '', c)
+    if not d:
+        return ''
+    if d.startswith('920') or d[0] in '48':
+        return 'bj' + d
+    if d[0] in '69':
+        return 'sh' + d
+    return 'sz' + d
 
 
 def bucket_of(judge):
@@ -141,24 +206,26 @@ def enrich(r):
 
 # ── 片段渲染 ──────────────────────────────────────────────────────────
 def h_space(v, big=False):
-    """0 轴居中的潜在空间条。"""
+    """0 轴居中的潜在空间条。data-f="bar" 供页内刷新按新现价重绘几何。"""
     cls = 'sb--lg' if big else ''
     if v is None:
-        return '<div class="sb sb--na %s"><i class="sb__z" style="left:%.2f%%"></i></div>' % (cls, ZERO_PCT)
+        return ('<div class="sb sb--na %s" data-f="bar"><i class="sb__z" '
+                'style="left:%.2f%%"></i></div>' % (cls, ZERO_PCT))
     c = max(SPACE_MIN, min(SPACE_MAX, v))
     if c >= 0:
         left, width, tone = ZERO_PCT, c / SPACE_SPAN * 100, ('is-up' if c > 0 else 'is-flat')
     else:
         width = (-c) / SPACE_SPAN * 100
         left, tone = ZERO_PCT - width, 'is-down'
-    return ('<div class="sb %s"><i class="sb__z" style="left:%.2f%%"></i>'
+    return ('<div class="sb %s" data-f="bar"><i class="sb__z" style="left:%.2f%%"></i>'
             '<span class="sb__b %s" style="left:%.2f%%;width:%.2f%%"></span></div>'
             % (cls, ZERO_PCT, tone, left, max(width, 1.0)))
 
 
 def h_space_cell(v):
     tone = 'is-up' if (v or 0) > 0 else ('is-down' if (v or 0) < 0 else 'is-flat')
-    num = '<span class="sp__n %s">%s</span>' % (tone, fmt_pct(v))
+    num = ('<span class="sp__n %s" data-f="up" data-fb="sp__n">%s</span>'
+           % (tone, fmt_pct(v)))
     return '<div class="sp">%s%s</div>' % (num, h_space(v))
 
 
@@ -175,25 +242,30 @@ def h_win(w):
 
 
 def h_gap(g):
+    """data-f="gap" / data-fb="gp"：刷新时按新现价重算「距买点」。
+    表内用 gp 样式（负值为等宽数字、跨过 0 变「已在区间」）。"""
     if g is None:
-        return '<span class="dim">—</span>'
+        return '<span class="dim" data-f="gap" data-fb="">—</span>'
     if g >= 0:
-        return '<span class="gp is-up">已在区间</span>'
-    return '<span class="gp is-wait n">%s</span>' % fmt_pct(g)
+        return '<span class="gp is-up" data-f="gap" data-fb="gp">已在区间</span>'
+    return '<span class="gp is-wait n" data-f="gap" data-fb="gp">%s</span>' % fmt_pct(g)
 
 
 def h_price(r):
+    """价格带「现价 → 期望价」。现价 span 打 data-f="px"，期望价为报告口径、
+    刷新时不动（打 data-f="exp" 只作定位，不参与重算）。"""
     px = r.get('px') or r.get('px_n') or '—'
     if r['exp_v'] is not None:
         exp = escape(str(r.get('exp_n') or r.get('exp') or ''))
-        return ('<span class="pb"><span class="pb__c n">%s</span>'
-                '<span class="pb__a">→</span><span class="pb__e n">%s</span></span>'
+        return ('<span class="pb"><span class="pb__c n" data-f="px" data-fb="pb__c n">%s</span>'
+                '<span class="pb__a">→</span><span class="pb__e n" data-f="exp">%s</span></span>'
                 % (escape(str(px)), exp))
     if r['target_v'] is not None:
-        return ('<span class="pb"><span class="pb__c n">%s</span>'
+        return ('<span class="pb"><span class="pb__c n" data-f="px" data-fb="pb__c n">%s</span>'
                 '<span class="pb__a">·</span><span class="pb__t n">机构目标 %s</span></span>'
                 % (escape(str(px)), escape(str(r.get('target')))))
-    return '<span class="pb"><span class="pb__c n">%s</span></span>' % escape(str(px))
+    return ('<span class="pb"><span class="pb__c n" data-f="px" data-fb="pb__c n">%s</span></span>'
+            % escape(str(px)))
 
 
 def h_link(r):
@@ -229,12 +301,16 @@ def row_html(r, idx):
     tcls, _ = BUCKET[r['bkt']]
     attrs = (
         'data-row data-b="%s" data-zone="%s" data-pos="%d" data-fresh="%d" '
-        'data-up="%s" data-win="%s" data-gap="%s" data-k="%s"'
+        'data-up="%s" data-win="%s" data-gap="%s" data-k="%s" '
+        'data-code="%s" data-e="%s" data-hi="%s"'
         % (r['bkt'], r['zone'], r['pos'], int(r.get('fresh') or 0),
            '' if r['up'] is None else r['up'],
            '' if r['win_v'] is None else r['win_v'],
            '' if r['gap'] is None else r['gap'],
-           escape(r['search'], quote=True))
+           escape(r['search'], quote=True),
+           escape(str(r['code']), quote=True),
+           '' if r['exp_v'] is None else r['exp_v'],
+           '' if r.get('obs_hi') is None else r['obs_hi'])
     )
     fresh = ' is-fresh' if r.get('fresh') else ''
     chg = ''
@@ -272,12 +348,16 @@ def card_html(r):
     tone = 'is-up' if (r['up'] or 0) >= 0 else 'is-down'
     attrs = (
         'data-row data-b="%s" data-zone="%s" data-pos="%d" data-fresh="%d" '
-        'data-up="%s" data-win="%s" data-gap="%s" data-k="%s"'
+        'data-up="%s" data-win="%s" data-gap="%s" data-k="%s" '
+        'data-code="%s" data-e="%s" data-hi="%s"'
         % (r['bkt'], r['zone'], r['pos'], int(r.get('fresh') or 0),
            '' if r['up'] is None else r['up'],
            '' if r['win_v'] is None else r['win_v'],
            '' if r['gap'] is None else r['gap'],
-           escape(r['search'], quote=True))
+           escape(r['search'], quote=True),
+           escape(str(r['code']), quote=True),
+           '' if r['exp_v'] is None else r['exp_v'],
+           '' if r.get('obs_hi') is None else r['obs_hi'])
     )
     win_txt = ('%d%%' % r['win_v']) if r['win_v'] is not None else '—'
     gap_txt = '—' if r['gap'] is None else ('已在区间' if r['gap'] >= 0 else '需回调 %.1f%%' % abs(r['gap']))
@@ -294,12 +374,13 @@ def card_html(r):
         '<div class="zcard__top"><span class="zcard__idx n"></span>'
         '<div class="zcard__id"><b>%s</b><span class="cd">%s</span></div>'
         '<span class="tag %s">%s</span>%s</div>'
-        '<div class="zcard__hero"><div class="zh__v %s n">%s</div>'
+        '<div class="zcard__hero"><div class="zh__v %s n" data-f="up" data-fb="zh__v n">%s</div>'
         '<div class="zh__l">潜在空间 <span class="dim">= 期望价 ÷ 现价 − 1</span></div>%s</div>'
         '<div class="zcard__kv">'
-        '<div><dt>现价 → 期望价</dt><dd class="n">%s <span class="pb__a">→</span> %s</dd></div>'
+        '<div><dt>现价 → 期望价</dt><dd class="n"><span data-f="px" data-fb="">%s</span> '
+        '<span class="pb__a">→</span> <span data-f="exp">%s</span></dd></div>'
         '<div><dt>买入胜率</dt><dd class="n">%s</dd></div>'
-        '<div><dt>距观察买点</dt><dd>%s</dd></div>'
+        '<div><dt>距观察买点</dt><dd data-f="gap" data-fb="zcard__gap">%s</dd></div>'
         '<div><dt>报告日期</dt><dd class="n">%s</dd></div>'
         '</div>'
         '%s'
@@ -340,24 +421,22 @@ def zone_table(rows_):
 
 def _zoneA_text(rows_):
     """A 区结语按数据生成 —— 现价一变，达标数与「是否已进买点区间」都会变，
-    写死文案会与图表自相矛盾（2026-10-12 现价刷新时实测踩到）。"""
+    写死文案会与图表自相矛盾（2026-10-12 现价刷新时实测踩到）。
+    文案模板与页内 JS 共用 TPL_BAG，刷新时 JS 只换数字不换措辞。"""
     n_ok = sum(1 for r in rows_ if r['up'] is not None and r['up'] >= 15
                and r['win_v'] is not None and r['win_v'] >= 30)
     n_hi = sum(1 for r in rows_ if r['win_v'] is not None and r['win_v'] >= 30)
     n_in = sum(1 for r in rows_ if r['gap'] is not None and r['gap'] >= 0)
-    desc = '期望价高于现价（潜在空间 ≥ 0）'
-    if n_in:
-        desc += '；其中 %d 只现价已进入观察买点区间' % n_in
-    else:
-        desc += '；尚未进入观察买点区间'
+    n_neg = sum(1 for r in rows_ if r['up'] is not None and r['up'] < 0)
+    desc = (Z_T_DESC_IN.format(nin=n_in) if n_in else Z_T_DESC_OUT)
+    if n_neg:
+        desc += Z_T_DESC_NEG.format(nneg=n_neg)
     if n_ok:
-        note = ('上行空间为正；其中 %d 只同时满足「潜在空间 ≥ +15%% 且胜率 ≥ 30%%」的建仓门槛，'
-                '另有 %d 只胜率达标但空间未达门槛。仍须回到报告原文逐个核验证点。' % (n_ok, n_hi - n_ok))
+        note = Z_T_NOTE_OK.format(nok=n_ok, rest=n_hi - n_ok)
     elif n_hi:
-        note = ('上行空间为正，且已有 %d 只胜率 ≥ 30%%，但空间均未达 +15%% 门槛，'
-                '尚不构成建仓信号。' % n_hi)
+        note = Z_T_NOTE_HI.format(nhi=n_hi)
     else:
-        note = '上行空间为正，但胜率均低于 30%，尚不构成建仓信号。'
+        note = Z_T_NOTE_NO
     return desc, note
 
 
@@ -367,15 +446,16 @@ def zone_block(zone, rows_):
         desc, note = _zoneA_text(rows_)
     body = ('<div class="zcards">%s</div>' % ''.join(card_html(r) for r in rows_)) \
         if zone == 'A' else zone_table(rows_)
-    note_html = '<div class="zone__note">%s</div>' % escape(note) if note else ''
+    note_html = ('<div class="zone__note" data-agg="znote">%s</div>' % escape(note)) if note else ''
+    dattr = ' data-agg="zdesc"' if zone == 'A' else ''
     return (
         '<section class="zone zone--%s">'
         '<div class="zone__head"><span class="zone__bar"></span>'
         '<span class="zone__t">%s · %s</span>'
-        '<span class="zone__d">%s</span>'
+        '<span class="zone__d"%s>%s</span>'
         '<span class="zone__n n">%d</span><span class="zone__chev">▼</span></div>'
         '<div class="zone__body">%s%s</div></section>'
-        % (zone, letter, escape(title), escape(desc), len(rows_), note_html, body)
+        % (zone, letter, escape(title), dattr, escape(desc), len(rows_), note_html, body)
     )
 
 
@@ -399,28 +479,24 @@ def viz_space(rows_):
         tally.append((lab, sub, c))
     mx = max([c for _, _, c in tally] or [1])
     cols = []
-    for lab, sub, c in tally:
+    for i, (lab, sub, c) in enumerate(tally):
         h = (c / mx * 100) if mx else 0
         tone = 'is-up' if lab.startswith('≥') else ('is-warn' if lab.startswith('<') else 'is-down')
         cols.append(
             '<div class="cbar %s"><div class="cbar__c">'
-            '<span class="cbar__f" style="height:%.1f%%"><b class="cbar__v n">%d</b></span>'
+            '<span class="cbar__f" data-agg="dist-b%d" style="height:%.1f%%">'
+            '<b class="cbar__v n" data-agg="dist-n%d">%d</b></span>'
             '</div><div class="cbar__x n">%s</div>%s</div>'
-            % (tone, h, c, escape(lab), '<div class="cbar__s">%s</div>' % sub if sub else '')
+            % (tone, i, h, i, c, escape(lab), '<div class="cbar__s">%s</div>' % sub if sub else '')
         )
     n_pass = sum(1 for r in rows_ if r['up'] is not None and r['up'] >= 15
                  and r['win_v'] is not None and r['win_v'] >= 30)
-    if n_pass:
-        foot = ('0 轴右侧为「期望价高于现价」；建仓门槛为潜在空间 ≥ +15%% 且胜率 ≥ 30%%，'
-                '<b class="hl-up">本轮 %d 只达标</b>。分档左闭右开，如 −5.0%% 计入「−5 ~ 0」档。' % n_pass)
-    else:
-        foot = ('0 轴右侧为「期望价高于现价」；建仓门槛为潜在空间 ≥ +15%% 且胜率 ≥ 30%%'
-                '（本轮 0 只达标）。分档左闭右开，如 −5.0%% 计入「−5 ~ 0」档。')
+    foot = SP_T_FOOT.format(npass=n_pass) if n_pass else SP_T_FOOT0
     return (
         '<div class="viz"><div class="viz__h">潜在空间分布'
         '<span class="viz__s">%d 只有量化期望价 · 单位 %%</span></div>'
         '<div class="bars">%s</div>'
-        '<div class="viz__f">%s</div>'
+        '<div class="viz__f" data-agg="spfoot">%s</div>'
         '</div>' % (len(vals), ''.join(cols), foot)
     )
 
@@ -433,32 +509,30 @@ def viz_matrix(rows_):
     pool = [r for r in rows_ if r['up'] is not None and r['win_v'] is not None]
     body = []
     col_tot = [0] * len(COL_DEFS)
-    for rlab, wlo, whi in WIN_ROWS:
+    for ri, (rlab, wlo, whi) in enumerate(WIN_ROWS):
         cells, rt = [], 0
-        for i, (clab, clo, chi) in enumerate(COL_DEFS):
+        for ci, (clab, clo, chi) in enumerate(COL_DEFS):
             n = sum(1 for r in pool if wlo <= r['win_v'] < whi and clo <= r['up'] < chi)
             rt += n
-            col_tot[i] += n
+            col_tot[ci] += n
             lvl = 'is-z' if n == 0 else ('is-1' if n <= 2 else ('is-2' if n <= 5 else 'is-3'))
-            cells.append('<td class="mx__c %s n">%s</td>' % (lvl, n if n else '·'))
-        body.append('<tr><th>%s</th>%s<td class="mx__t n">%d</td></tr>'
-                    % (escape(rlab), ''.join(cells), rt))
+            cells.append('<td class="mx__c %s n" data-agg="mxd-%d-%d">%s</td>'
+                         % (lvl, ri, ci, n if n else '·'))
+        body.append('<tr><th>%s</th>%s<td class="mx__t n" data-agg="mxrt-%d">%d</td></tr>'
+                    % (escape(rlab), ''.join(cells), ri, rt))
     head = ''.join('<th class="ta-c">%s</th>' % escape(c) for c, _, _ in COL_DEFS)
-    foot = ''.join('<td class="mx__t n">%d</td>' % c for c in col_tot)
+    foot = ''.join('<td class="mx__t n" data-agg="mxct-%d">%d</td>' % (i, c)
+                   for i, c in enumerate(col_tot))
     # 右上角 = 「胜率 ≥ 30%」行 × 「潜在空间 ≥ 0」列，即「胜率与赔率同时达标」
     hi_cell = sum(1 for r in pool if r['win_v'] >= 30 and r['up'] >= 0)
-    if hi_cell:
-        mx_foot = ('右上角（高胜率 × 正空间）<b class="hl-up">有 %d 只</b> —— '
-                   '即全池存在「胜率与赔率同时达标」的标的，见各区名单。' % hi_cell)
-    else:
-        mx_foot = '右上角（高胜率 × 正空间）为空 —— 即全池不存在「胜率与赔率同时达标」的标的。'
+    mx_foot = MX_T_FOOT.format(hi=hi_cell) if hi_cell else MX_T_FOOT0
     return (
         '<div class="viz"><div class="viz__h">赔率矩阵'
         '<span class="viz__s">胜率 ＼ 潜在空间 · 单位：只</span></div>'
         '<table class="mx"><thead><tr><th class="mx__h">胜率 ＼ 空间</th>%s'
         '<th class="ta-c">合计</th></tr></thead><tbody>%s</tbody>'
-        '<tfoot><tr><th>合计</th>%s<td class="mx__t n">%d</td></tr></tfoot></table>'
-        '<div class="viz__f">%s</div>'
+        '<tfoot><tr><th>合计</th>%s<td class="mx__t n" data-agg="mxgt">%d</td></tr></tfoot></table>'
+        '<div class="viz__f" data-agg="mxfoot">%s</div>'
         '</div>' % (head, ''.join(body), foot, len(pool), mx_foot)
     )
 
@@ -556,20 +630,25 @@ def positions_html(positions, rows_by_code):
             plp = (px / cost - 1) * 100
             cls = 'is-up' if pl >= 0 else 'is-down'
             pl_html = ('<div class="pos__pl"><dt>浮动盈亏（对成本）</dt>'
-                       '<dd class="%s n">%+.1f%% <span>%+.0f 元</span></dd></div>' % (cls, plp, pl))
+                       '<dd class="%s n" data-f="pl" data-fb="">%+.1f%% <span data-f="plv">%+.0f 元</span></dd></div>'
+                       % (cls, plp, pl))
             cost_html = '%.3f %s' % (cost, cur)
             pl_txt = '<span class="%s n">%+.1f%%</span>' % (cls, plp)
         else:
             cost_html = p.get('cost_label') or '—'
             pl_txt = '<span class="dim">%s</span>' % escape(p.get('cost_label') or '—')
-        px_html = ('%s <span class="pos__chg">今日 %s%%</span>' % (px_s, chg)) if px_s and chg != '' else (px_s or '—')
+        px_html = ('<span data-f="px" data-fb="">%s</span>'
+                   ' <span class="pos__chg">今日 %s%%</span>' % (escape(str(px_s)), escape(str(chg)))
+                   ) if px_s and chg != '' else ('<span data-f="px" data-fb="">%s</span>' % escape(str(px_s))
+                                                 if px_s else '—')
         max_n = p.get('shares_total')
         shares_txt = '%d 股' % shares if shares else '—'
         if max_n and max_n != shares:
             shares_txt += ' <span class="dim">/ 计划 %d</span>' % max_n
         items.append({'code': p['code'], 'name': p['name'], 'strategy': p.get('strategy', ''),
                       'shares_txt': shares_txt, 'cost_html': cost_html, 'px_s': px_s or '—',
-                      'mv': mv, 'cur': cur, 'pl_txt': pl_txt})
+                      'mv': mv, 'cur': cur, 'pl_txt': pl_txt,
+                      'has_cost': cost is not None and bool(px)})
         plans = ''.join(
             '<tr><td class="pos__trg">%s</td><td>%s</td></tr>' % (escape(t), escape(d))
             for t, d in (p.get('plan') or []))
@@ -581,8 +660,8 @@ def positions_html(positions, rows_by_code):
             '<div class="pos-card__kv">'
             '<div><dt>持仓 / 计划</dt><dd class="n">%s</dd></div>'
             '<div><dt>成本</dt><dd class="n">%s</dd></div>'
-            '<div><dt>现价</dt><dd class="n">%s</dd></div>'
-            '<div><dt>市值</dt><dd class="n">%.0f %s</dd></div>'
+            '<div><dt>现价</dt><dd class="n" data-f="pxw">%s</dd></div>'
+            '<div><dt>市值</dt><dd class="n" data-f="mv">%.0f %s</dd></div>'
             '%s</div>'
             '<p class="pos__note">%s</p>'
             '<table class="pos__plan"><thead><tr><th>环节</th><th>触发与动作</th></tr></thead>'
@@ -599,12 +678,13 @@ def positions_html(positions, rows_by_code):
         '<td><span class="posv">%s</span></td>'
         '<td class="n">%s</td>'
         '<td class="n">%s</td>'
-        '<td class="n">%s</td>'
-        '<td class="n">%.0f %s</td>'
-        '<td class="n">%s</td>'
+        '<td class="n"><span data-f="px" data-fb="">%s</span></td>'
+        '<td class="n" data-f="mv">%.0f %s</td>'
+        '<td class="n"%s>%s</td>'
         '<td class="pos-ov__go">计划 ↓</td></tr>'
         % (escape(it['code']), escape(it['name']), escape(it['code']), escape(it['strategy']),
-           it['shares_txt'], it['cost_html'], it['px_s'], it['mv'], it['cur'], it['pl_txt'])
+           it['shares_txt'], it['cost_html'], escape(str(it['px_s'])), it['mv'], it['cur'],
+           ' data-f="pl" data-fb=""' if it['has_cost'] else '', it['pl_txt'])
         for it in items)
     ov_html = ('<div class="pos-ovw"><table class="pos-ov">'
                '<thead><tr><th>标的</th><th>策略</th><th>持仓</th><th>成本</th>'
@@ -613,9 +693,9 @@ def positions_html(positions, rows_by_code):
     sum_pl = total_mv - total_cost
     cost_scope = '、'.join(it['name'] for it in items if it['pl_txt'].startswith('<span class="is-'))
     sum_html = ('<div class="pos-sum"><div><dt>持仓标的</dt><dd class="n">%d 只</dd></div>'
-                '<div><dt>总市值</dt><dd class="n">%.0f 元</dd></div>'
+                '<div><dt>总市值</dt><dd class="n" data-f="sum-mv">%.0f 元</dd></div>'
                 '<div><dt>在管成本（%s）</dt><dd class="n">%.0f 元</dd></div>'
-                '<div><dt>浮动盈亏（对在管成本）</dt><dd class="n %s">%+.0f 元</dd></div>'
+                '<div><dt>浮动盈亏（对在管成本）</dt><dd class="n %s" data-f="sum-pl">%+.0f 元</dd></div>'
                 '<div><dt>利润仓</dt><dd>%s</dd></div></div>'
                 % (len(positions), total_mv,
                    escape(cost_scope or '—'), total_cost,
@@ -670,44 +750,53 @@ def main():
     cnt = {b: sum(1 for r in rows if r['bkt'] == b) for b in ('N', 'H', 'S')}
 
     if n_pass:
-        verdict = ('覆盖 <b>%d</b> 只标的，其中 <b>%d</b> 只具备量化期望价。'
-                   '<span class="hl-up">%d 只</span>期望价高于现价（正空间），'
-                   '且其中 <span class="hl-up">%d 只</span>同时满足'
-                   '「潜在空间 ≥ +15%% 且胜率 ≥ 30%%」的建仓门槛。'
-                   % (n, n_quant, n_pos, n_pass))
+        verdict = V_T_PASS.format(n=n, nq=n_quant, npos=n_pos, npass=n_pass)
     else:
-        if n_w30_pos == 0:
-            tail = '%d 只胜率 ≥ 30%%，但其期望价均低于现价。' % n_w30
-        else:
-            tail = ('%d 只胜率 ≥ 30%%，其中 %d 只期望价高于现价，'
-                    '但仍未同时达到 +15%% 门槛。' % (n_w30, n_w30_pos))
-        verdict = ('覆盖 <b>%d</b> 只标的，其中 <b>%d</b> 只具备量化期望价。'
-                   '<span class="hl-up">%d 只</span>期望价高于现价（正空间），'
-                   '但 <b>0 只</b>同时满足「潜在空间 ≥ +15%% 且胜率 ≥ 30%%」的建仓门槛；%s'
-                   '<b>当前观察池无一只达到建仓标准。</b>'
-                   % (n, n_quant, n_pos, tail))
+        tail = (V_T_TAIL0.format(nw30=n_w30) if n_w30_pos == 0
+                else V_T_TAIL1.format(nw30=n_w30, nw30pos=n_w30_pos))
+        verdict = V_T_ZERO.format(n=n, nq=n_quant, npos=n_pos, tail=tail)
 
     # KPI 副标同样按数据生成：现价刷新后「正空间但胜率均 < 30%」等写死说法会失真
-    hint_pos = ('其中 %d 只同时达标' % n_pass) if n_pass else '正空间，但胜率均 &lt; 30%'
-    hint_w30 = ('其中 %d 只期望价高于现价' % n_w30_pos) if n_w30_pos else '期望价均低于现价'
+    hint_pos = V_T_HINT_P.format(npass=n_pass) if n_pass else V_T_HINT_P0
+    hint_w30 = V_T_HINT_W.format(nw30pos=n_w30_pos) if n_w30_pos else V_T_HINT_W0
+    # 第 5 项为「页内刷新可改」的节点 id（值 / 副标），空串表示静态
     kpis = [
-        ('kpi--plain', str(n), '覆盖标的', '取各标的<strong>最新一版</strong>报告'),
-        ('kpi--up', str(n_pos), '期望价 &gt; 现价', hint_pos),
-        ('kpi--plain', str(n_w30), '胜率 ≥ 30%', hint_w30),
-        ('kpi--plain', str(cnt['N']), '回避 / 不买', '本轮扫描的排除结果'),
-        ('kpi--brand', str(fresh_n), escape(a.prev_cutoff), '报告日 ≥ %s' % escape(fresh_from)),
+        ('kpi--plain', str(n), '覆盖标的', '取各标的<strong>最新一版</strong>报告', '', ''),
+        ('kpi--up', str(n_pos), '期望价 &gt; 现价', hint_pos, 'kpi-pos-v', 'kpi-pos-h'),
+        ('kpi--plain', str(n_w30), '胜率 ≥ 30%', hint_w30, '', 'kpi-w30-h'),
+        ('kpi--plain', str(cnt['N']), '回避 / 不买', '本轮扫描的排除结果', '', ''),
+        ('kpi--brand', str(fresh_n), escape(a.prev_cutoff), '报告日 ≥ %s' % escape(fresh_from), '', ''),
     ]
     kpi_html = ''.join(
-        '<div class="kpi %s"><div class="kpi__v n">%s</div>'
-        '<div class="kpi__l">%s</div><div class="kpi__h">%s</div></div>'
-        % (c, v, l, h) for c, v, l, h in kpis)
+        '<div class="kpi %s"><div class="kpi__v n"%s>%s</div>'
+        '<div class="kpi__l">%s</div><div class="kpi__h"%s>%s</div></div>'
+        % (c, (' data-agg="%s"' % vid) if vid else '', v, l,
+           (' data-agg="%s"' % hid) if hid else '', h)
+        for c, v, l, h, vid, hid in kpis)
 
     chips = [('all', '全部', n), ('pos', '正空间', n_pos),
              ('H', '持有观察', cnt['H']), ('N', '回避 / 不买', cnt['N']),
              ('S', '减持', cnt['S']), ('fresh', '最新批次', fresh_n)]
     chip_html = ''.join(
-        '<button class="chip%s" data-zone-filter="%s">%s<b>%d</b></button>'
-        % (' on' if k == 'all' else '', k, escape(l), v) for k, l, v in chips)
+        '<button class="chip%s" data-zone-filter="%s">%s<b%s>%d</b></button>'
+        % (' on' if k == 'all' else '', k, escape(l),
+           ' data-agg="chip-pos"' if k == 'pos' else '', v) for k, l, v in chips)
+
+    # 页内刷新用的最小数据模型：只有它和 TPL_BAG 进页面，渲染逻辑仍只在本文件里。
+    model = {
+        'rows': [{'c': r['code'], 'e': r['exp_v'], 'h': r.get('obs_hi'),
+                  'p': r.get('px_n') or r.get('px') or '', 'w': r['win_v'],
+                  'g': r['gap'], 'u': r['up'], 'z': r['zone']} for r in rows],
+        'pos': {p['code']: {'s': p.get('shares', 0), 'c': p.get('cost'),
+                            'cur': (rows_by_code.get(p['code']) or {}).get('cur', '元'),
+                            'px0': _f((rows_by_code.get(p['code']) or {}).get('px_n'))}
+                for p in positions},
+        'tpl': TPL_BAG,
+        'const': {'smin': SPACE_MIN, 'smax': SPACE_MAX, 'zero': round(ZERO_PCT, 4)},
+        'asof': (a.px_asof or '').strip() or (a.asof or ''),
+    }
+    model_json = (json.dumps(model, ensure_ascii=False, separators=(',', ':'))
+                  .replace('</', '<\\/'))
 
     html = TEMPLATE
     px_asof = (a.px_asof or '').strip()
@@ -738,6 +827,12 @@ def main():
         '@@CALENDAR@@': calendar(rows),
         '@@FRESH_FROM@@': escape(fresh_from),
         '@@POSITIONS@@': positions_html(positions, rows_by_code),
+        # ── 页内「刷新现价」所需的三样东西：数据模型、条窗口常量、快照时点
+        '@@PX_MODEL@@': model_json,
+        '@@SPACE_MIN@@': '%.1f' % SPACE_MIN,
+        '@@SPACE_MAX@@': '%.1f' % SPACE_MAX,
+        '@@ZERO_PCT@@': '%.4f' % ZERO_PCT,
+        '@@PX_SNAP@@': escape(px_asof or a.asof or '—'),
     }
     for k, v in repl.items():
         html = html.replace(k, v)
@@ -1022,6 +1117,23 @@ td.jd .tag{display:inline-block}
   color:var(--opb-ink);background:var(--opb-bg);border-radius:3px;padding:1px 6px;cursor:help;
   max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:none}
 
+/* ── 行情刷新条（2026-10-23 新增）────────────────────────────────────
+   取价走 qt.gtimg.cn 的 `v_<secid>="…"` 赋值式脚本，用 script 标签加载即绕过
+   CORS；资料库页面的 CSP script-src 白名单含 *.gtimg.cn，故线上同样可用。
+   失败一律降级为「保持渲染时快照」，不抛异常、不置空。               */
+.pxbar{display:flex;align-items:center;gap:var(--s3);flex-wrap:wrap;
+  margin:var(--s4) 0 0;padding:10px 14px;background:var(--surface);
+  border:1px solid var(--line);border-left:3px solid var(--brand);border-radius:var(--r2)}
+.pxbtn{appearance:none;border:1px solid var(--brand);background:var(--brand-fill);color:var(--on-brand);
+  font:600 var(--fs-sm)/1 var(--font);padding:8px 16px;border-radius:var(--rp);cursor:pointer}
+.pxbtn:hover{filter:brightness(1.08)}
+.pxbtn:disabled{opacity:.55;cursor:progress}
+.pxst{font-size:var(--fs-sm);color:var(--ink-500)}
+.pxst b{color:var(--ink-900)}
+.pxauto{display:flex;align-items:center;gap:6px;font-size:var(--fs-xs);color:var(--ink-400);cursor:pointer}
+.pxmsg{font-size:var(--fs-xs);color:var(--ink-400);margin-left:auto}
+.pxmsg.is-err{color:var(--j-s)}
+
 /* ── 视图 Tab（观察池 / 持仓与计划） ─────────────────────────────── */
 .vtabs{display:flex;gap:8px;margin:18px 0 0}
 .vtab{appearance:none;border:1px solid var(--line);background:var(--surface);color:var(--ink-500);
@@ -1249,6 +1361,13 @@ var t=m[localStorage.getItem('wl-theme')];if(t){document.documentElement.setAttr
   </div>
 </header>
 
+<div class="pxbar" id="pxbar">
+  <button type="button" class="pxbtn" id="px-refresh">↻ 刷新现价</button>
+  <span class="pxst" id="px-status">现价为 <b>@@PX_SNAP@@</b> 快照 · 点左侧按钮可拉实时行情并重算全部派生统计</span>
+  <label class="pxauto"><input type="checkbox" id="px-auto"> 交易时段每 60s 自动刷新</label>
+  <span class="pxmsg" id="px-msg"></span>
+</div>
+
 <nav class="vtabs" role="tablist" aria-label="视图切换">
   <button type="button" class="vtab on" data-v="pos" aria-pressed="true">持仓与计划</button>
   <button type="button" class="vtab" data-v="pool" aria-pressed="false">观察池</button>
@@ -1257,7 +1376,7 @@ var t=m[localStorage.getItem('wl-theme')];if(t){document.documentElement.setAttr
 <div id="view-pool">
 <section class="verdict">
   <span class="verdict__ico">i</span>
-  <p class="verdict__t">@@VERDICT@@</p>
+  <p class="verdict__t" id="verdict-t">@@VERDICT@@</p>
 </section>
 
 <div class="kpis">@@KPIS@@</div>
@@ -1462,6 +1581,9 @@ var t=m[localStorage.getItem('wl-theme')];if(t){document.documentElement.setAttr
   });
 
   sortAll(); apply();
+  /* 行情刷新重算完 data-up / data-gap / data-pos 后要重排与重筛，
+     故把这两个动作暴露出去（2026-10-23 新增，供下方行情模块调用）。 */
+  window.__wlSort = function(){ sortAll(); apply(); };
 
   /* ── 配色档位切换 ────────────────────────────────────────────────
      与 head 里的预置脚本共用同一 localStorage 键（wl-theme）。
@@ -1485,6 +1607,442 @@ var t=m[localStorage.getItem('wl-theme')];if(t){document.documentElement.setAttr
     });
     mark(document.documentElement.getAttribute('data-theme') || 'std');
   })();
+})();
+</script>
+<script>
+/* 数据模型：供下方刷新模块消费。用 JS 赋值而非 type="application/json" ——
+   后者的内容会被静态检查当成 JS 编译而误报语法错。 */
+var WL_MODEL = @@PX_MODEL@@;</script>
+<script>
+/* ══ 行情刷新（2026-10-23）══════════════════════════════════════════════
+   台账是离线单文件，不能起后端。取价走腾讯行情 qt.gtimg.cn：它返回的是
+   `v_sh600415="1~名称~代码~现价~…"` 这种 JS 赋值，用 script 标签加载即执行，
+   天然绕过 CORS（fetch 会被挡，因为对方不返 Access-Control-Allow-Origin）。
+
+   实测结论（2026-10-23，headless Edge）：
+     · 四板块前缀均可用：sh / sz / hk（5 位）/ bj；
+     · 单批 30 只约 150ms 返回；
+     · 资料库页面 CSP 的 script-src 白名单含 *.gtimg.cn，线上同样放行；
+     · 现价在 split('~')[3]，涨跌幅 [32]，行情时间 [30]。
+
+   🔴 刷新必须重算全部派生值，不能只改现价那一格 —— 顶部 verdict、KPI、
+      分布柱、赔率矩阵、分区 chips、A 区结语、排序、持仓市值浮盈都吃现价，
+      只改一格会让页面自相矛盾（2026-10-12 已踩过一次）。
+   🔴 文案不在此处另写：模板串来自 Python 的 TPL_BAG，这里只做数字替换。
+   🔴 分区归属（A / H / N / S）是快照口径，刷新不重新分区；若 A 区有卡片
+      空间转负，结语会显式写出「另有 N 只空间已转负」，不静默说谎。
+   ═══════════════════════════════════════════════════════════════════ */
+(function(){
+  var M = window.WL_MODEL;
+  if(!M || !M.rows) return;
+  var C = M.const, T = M.tpl;
+  var BTN = document.getElementById('px-refresh'),
+      ST  = document.getElementById('px-status'),
+      MSG = document.getElementById('px-msg'),
+      AUTO= document.getElementById('px-auto');
+  var PX = {}, timer = null, busy = false;
+
+  /* 初始化：以渲染时快照价为起点，未取到的标的一直用快照价 */
+  (function(){
+    var i, r, p;
+    for(i = 0; i < M.rows.length; i++){
+      r = M.rows[i];
+      var v = parseFloat(r.p);
+      PX[r.c] = { px: isNaN(v) ? 0 : v, str: r.p, chg: null };
+    }
+    for(var k in M.pos){
+      if(!M.pos.hasOwnProperty(k)) continue;
+      p = M.pos[k];
+      if(!PX[k] || !PX[k].px){
+        PX[k] = { px: p.px0 || 0, str: p.px0 ? p.px0.toFixed(2) : '—', chg: null };
+      }
+    }
+  })();
+
+  /* ── 与 Python px_secid() 同规则，改动须两处同步 ───────────────── */
+  function secid(code){
+    var c = String(code || '').toUpperCase();
+    if(c.slice(-3) === '.HK'){
+      var h = c.replace(/\D/g, '');
+      while(h.length < 5){ h = '0' + h; }
+      return 'hk' + h;
+    }
+    var d = c.replace(/\D/g, '');
+    if(!d) return '';
+    if(d.indexOf('920') === 0 || d.charAt(0) === '4' || d.charAt(0) === '8') return 'bj' + d;
+    if(d.charAt(0) === '6' || d.charAt(0) === '9') return 'sh' + d;
+    return 'sz' + d;
+  }
+  function fmtPct(v){
+    if(v === null || v === undefined) return '—';
+    return (v > 0 ? '+' : (v < 0 ? '-' : '')) + Math.abs(v).toFixed(1) + '%';
+  }
+  function r1(x){ return Math.round(x * 10) / 10; }
+  function signN(v, d){ return (v >= 0 ? '+' : '') + v.toFixed(d); }
+  function sub(t, o){
+    return String(t).replace(/\{(\w+)\}/g, function(m, k){
+      return (o[k] === undefined || o[k] === null) ? m : o[k];
+    });
+  }
+  function q1(sel){ return document.querySelector(sel); }
+  function qa(sel){ return Array.prototype.slice.call(document.querySelectorAll(sel)); }
+
+  /* ── 逐行数值刷新 ─────────────────────────────────────────────── */
+  function drawBar(el, v){
+    var span = C.smax - C.smin, zero = C.zero;
+    var base = 'sb' + (el.className.indexOf('sb--lg') >= 0 ? ' sb--lg' : '');
+    var z = '<i class="sb__z" style="left:' + zero.toFixed(2) + '%"></i>';
+    if(v === null || v === undefined){
+      el.className = base + ' sb--na';
+      el.innerHTML = z;
+      return;
+    }
+    var c = Math.max(C.smin, Math.min(C.smax, v)), left, width, tone;
+    if(c >= 0){ left = zero; width = c / span * 100; tone = c > 0 ? 'is-up' : 'is-flat'; }
+    else { width = (-c) / span * 100; left = zero - width; tone = 'is-down'; }
+    el.className = base;
+    el.innerHTML = z + '<span class="sb__b ' + tone + '" style="left:' + left.toFixed(2) +
+      '%;width:' + Math.max(width, 1.0).toFixed(2) + '%"></span>';
+  }
+  function setGap(el, g){
+    var fb = el.getAttribute('data-fb') || '';
+    if(g === null || g === undefined){ el.className = fb; el.textContent = '—'; return; }
+    if(fb.indexOf('gp') >= 0){
+      if(g >= 0){ el.className = 'gp is-up'; el.textContent = '已在区间'; }
+      else { el.className = 'gp is-wait n'; el.textContent = fmtPct(g); }
+    } else {
+      el.className = fb;
+      el.textContent = (g >= 0) ? '已在区间' : '需回调 ' + Math.abs(g).toFixed(1) + '%';
+    }
+  }
+  function patchRow(el, r){
+    el.setAttribute('data-up', (r.u === null || r.u === undefined) ? '' : r.u);
+    el.setAttribute('data-gap', (r.g === null || r.g === undefined) ? '' : r.g);
+    el.setAttribute('data-pos', (r.u !== null && r.u >= 0) ? '1' : '0');
+    var pxEl = el.querySelector('[data-f="px"]');
+    if(pxEl && r.p) pxEl.textContent = r.p;
+    var upEl = el.querySelector('[data-f="up"]');
+    if(upEl){
+      var fb = upEl.getAttribute('data-fb') || '';
+      var tone = (r.u !== null && r.u > 0) ? 'is-up'
+               : ((r.u !== null && r.u < 0) ? 'is-down' : 'is-flat');
+      if(fb.indexOf('zh__v') >= 0) tone = (r.u !== null && r.u >= 0) ? 'is-up' : 'is-down';
+      upEl.className = (fb ? fb + ' ' : '') + tone;
+      upEl.textContent = fmtPct(r.u);
+    }
+    var bar = el.querySelector('[data-f="bar"]');
+    if(bar) drawBar(bar, r.u);
+    var gp = el.querySelector('[data-f="gap"]');
+    if(gp) setGap(gp, r.g);
+  }
+
+  /* ── 聚合重算 ─────────────────────────────────────────────────── */
+  function recount(){
+    var R = M.rows, i, r, n = R.length;
+    var nq = 0, npos = 0, npass = 0, nw30 = 0, nw30pos = 0;
+    var aN = 0, aOk = 0, aHi = 0, aIn = 0, aNeg = 0, aGain = 0;
+    for(i = 0; i < n; i++){
+      r = R[i];
+      var hasU = (r.u !== null && r.u !== undefined);
+      var hasW = (r.w !== null && r.w !== undefined);
+      if(hasU) nq++;
+      if(hasU && r.u >= 0) npos++;
+      if(hasW && r.w >= 30){
+        nw30++;
+        if(hasU && r.u >= 0) nw30pos++;
+        if(hasU && r.u >= 15) npass++;
+      }
+      if(r.z === 'A'){
+        aN++;
+        if(hasW && r.w >= 30){ aHi++; if(hasU && r.u >= 15) aOk++; }
+        if(r.g !== null && r.g !== undefined && r.g >= 0) aIn++;
+        if(hasU && r.u < 0) aNeg++;
+      } else if(hasU && r.u >= 0){
+        aGain++;
+      }
+    }
+    return {n:n, nq:nq, npos:npos, npass:npass, nw30:nw30, nw30pos:nw30pos,
+            aN:aN, aOk:aOk, aHi:aHi, aIn:aIn, aNeg:aNeg, aGain:aGain};
+  }
+
+  function fillAll(){
+    var s = recount(), i, j, el;
+
+    /* ① 结论条 */
+    el = document.getElementById('verdict-t');
+    if(el){
+      if(s.npass){
+        el.innerHTML = sub(T.vpass, s);
+      } else {
+        var tail = s.nw30pos ? sub(T.vtail1, s) : sub(T.vtail0, s);
+        el.innerHTML = sub(T.vzero, {n:s.n, nq:s.nq, npos:s.npos, tail:tail});
+      }
+    }
+    /* ② KPI */
+    el = q1('[data-agg="kpi-pos-v"]'); if(el) el.textContent = s.npos;
+    el = q1('[data-agg="kpi-pos-h"]');
+    if(el) el.innerHTML = s.npass ? sub(T.hintp, s) : T.hintp0;
+    el = q1('[data-agg="kpi-w30-h"]');
+    if(el) el.innerHTML = s.nw30pos ? sub(T.hintw, s) : T.hintw0;
+    /* ③ chips */
+    el = q1('[data-agg="chip-pos"]'); if(el) el.textContent = s.npos;
+
+    /* ④ 潜在空间分布 */
+    var BK = [[0, 1e9], [-5, 0], [-10, -5], [-15, -10], [-20, -15], [-30, -20], [-1e9, -30]];
+    var tal = [0, 0, 0, 0, 0, 0, 0], mx = 1;
+    for(i = 0; i < M.rows.length; i++){
+      var v = M.rows[i].u;
+      if(v === null || v === undefined) continue;
+      for(j = 0; j < BK.length; j++){ if(v >= BK[j][0] && v < BK[j][1]){ tal[j]++; break; } }
+    }
+    for(j = 0; j < tal.length; j++){ if(tal[j] > mx) mx = tal[j]; }
+    for(j = 0; j < tal.length; j++){
+      el = q1('[data-agg="dist-b' + j + '"]');
+      if(el) el.style.height = (tal[j] / mx * 100).toFixed(1) + '%';
+      el = q1('[data-agg="dist-n' + j + '"]');
+      if(el) el.textContent = tal[j];
+    }
+    el = q1('[data-agg="spfoot"]');
+    if(el) el.innerHTML = s.npass ? sub(T.spfoot, s) : T.spfoot0;
+
+    /* ⑤ 赔率矩阵 */
+    var WR = [[30, 1e9], [25, 30], [-1e9, 25]], CD = [[0, 1e9], [-10, 0], [-20, -10], [-1e9, -20]];
+    var colT = [0, 0, 0, 0], pool = 0;
+    for(i = 0; i < M.rows.length; i++){
+      var rr = M.rows[i];
+      if(rr.u === null || rr.u === undefined || rr.w === null || rr.w === undefined) continue;
+      pool++;
+    }
+    for(i = 0; i < WR.length; i++){
+      var rt = 0;
+      for(j = 0; j < CD.length; j++){
+        var cnt = 0;
+        for(var k = 0; k < M.rows.length; k++){
+          var rk = M.rows[k];
+          if(rk.u === null || rk.u === undefined || rk.w === null || rk.w === undefined) continue;
+          if(rk.w >= WR[i][0] && rk.w < WR[i][1] && rk.u >= CD[j][0] && rk.u < CD[j][1]) cnt++;
+        }
+        rt += cnt; colT[j] += cnt;
+        el = q1('[data-agg="mxd-' + i + '-' + j + '"]');
+        if(el){
+          el.className = 'mx__c ' + (cnt === 0 ? 'is-z' : (cnt <= 2 ? 'is-1' : (cnt <= 5 ? 'is-2' : 'is-3'))) + ' n';
+          el.textContent = cnt ? cnt : '·';
+        }
+      }
+      el = q1('[data-agg="mxrt-' + i + '"]'); if(el) el.textContent = rt;
+    }
+    for(j = 0; j < colT.length; j++){
+      el = q1('[data-agg="mxct-' + j + '"]'); if(el) el.textContent = colT[j];
+    }
+    el = q1('[data-agg="mxgt"]'); if(el) el.textContent = pool;
+    el = q1('[data-agg="mxfoot"]');
+    if(el){
+      var hiN = countHi();
+      el.innerHTML = hiN ? sub(T.mxfoot, {hi:hiN}) : T.mxfoot0;
+    }
+
+    /* ⑥ A 区结语 */
+    el = q1('[data-agg="zdesc"]');
+    if(el){
+      var desc = s.aIn ? sub(T.zdesc_in, {nin:s.aIn}) : T.zdesc_out;
+      if(s.aNeg) desc += sub(T.zdesc_neg, {nneg:s.aNeg});
+      if(s.aGain) desc += sub(T.zdesc_gain, {ngain:s.aGain});
+      el.textContent = desc;
+    }
+    el = q1('[data-agg="znote"]');
+    if(el){
+      el.textContent = s.aOk ? sub(T.znote_ok, {nok:s.aOk, rest:Math.max(0, s.aHi - s.aOk)})
+                    : (s.aHi ? sub(T.znote_hi, {nhi:s.aHi}) : T.znote_no);
+    }
+  }
+  function countHi(){
+    var c = 0, i, r;
+    for(i = 0; i < M.rows.length; i++){
+      r = M.rows[i];
+      if(r.u !== null && r.u !== undefined && r.u >= 0 && r.w !== null && r.w >= 30) c++;
+    }
+    return c;
+  }
+
+  /* ── 持仓 Tab ─────────────────────────────────────────────────── */
+  function patchPositions(){
+    var totalMv = 0, totalCost = 0, anyCost = false, k, p, q, px, mv, pl, plp, el, row;
+    for(k in M.pos){
+      if(!M.pos.hasOwnProperty(k)) continue;
+      p = M.pos[k]; q = PX[k] || {px:p.px0 || 0, str:'—', chg:null};
+      px = q.px || 0;
+      if(!px) continue;
+      mv = p.s * px;
+      totalMv += mv;
+      var want = (p.c !== null && p.c !== undefined);
+      if(want){ totalCost += p.c * p.s; anyCost = true; }
+      var scopes = [];
+      row = q1('.pos-ov__row[data-code="' + k + '"]');
+      if(row) scopes.push(row);
+      var card = document.getElementById('pos-' + k);
+      if(card) scopes.push(card);
+      for(var t = 0; t < scopes.length; t++){
+        el = scopes[t].querySelector('[data-f="px"]');
+        if(el) el.textContent = q.str;
+        el = scopes[t].querySelector('[data-f="pxw"]');
+        if(el){
+          var chgEl = el.querySelector('.pos__chg');
+          el.innerHTML = '<span data-f="px" data-fb="">' + q.str + '</span>' +
+            (chgEl ? ' <span class="pos__chg">今日 ' +
+              (q.chg === null ? '—' : q.chg.toFixed(2)) + '%</span>' : '');
+        }
+        el = scopes[t].querySelector('[data-f="mv"]');
+        if(el) el.textContent = Math.round(mv) + ' ' + (p.cur || '元');
+        if(want){
+          el = scopes[t].querySelector('[data-f="pl"]');
+          if(el){
+            pl = mv - p.c * p.s;
+            plp = (px / p.c - 1) * 100;
+            var tone = pl >= 0 ? 'is-up' : 'is-down';
+            if(el.querySelector('[data-f="plv"]')){
+              el.className = tone + ' n';
+              el.innerHTML = signN(plp, 1) + '% <span data-f="plv">' +
+                signN(Math.round(pl), 0) + ' 元</span>';
+            } else {
+              el.innerHTML = '<span class="' + tone + ' n">' + signN(plp, 1) + '%</span>';
+            }
+          }
+        }
+      }
+    }
+    el = q1('[data-f="sum-mv"]');
+    if(el) el.textContent = Math.round(totalMv) + ' 元';
+    el = q1('[data-f="sum-pl"]');
+    if(el && anyCost){
+      var spl = totalMv - totalCost;
+      el.className = 'n ' + (spl >= 0 ? 'is-up' : 'is-down');
+      el.textContent = signN(Math.round(spl), 0) + ' 元';
+    }
+  }
+
+  /* ── 取价 ─────────────────────────────────────────────────────── */
+  function loadQuotes(codes, done){
+    var batches = [], i, got = {}, left = 0, failed = 0;
+    for(i = 0; i < codes.length; i += 30) batches.push(codes.slice(i, i + 30));
+    if(!batches.length){ done(got, 0); return; }
+    left = batches.length;
+    function settle(ok){
+      if(!ok) failed++;
+      left--;
+      if(left === 0) done(got, failed);
+    }
+    batches.forEach(function(b){
+      var s = document.createElement('script');
+      s.charset = 'gbk';
+      var ids = b.map(secid);
+      s.src = 'https://qt.gtimg.cn/q=' + ids.join(',');
+      var done1 = false;
+      function once(ok){ if(done1) return; done1 = true; settle(ok); }
+      s.onload = function(){
+        for(var j = 0; j < b.length; j++){
+          var raw = window['v_' + ids[j]];
+          if(!raw) continue;
+          var f = String(raw).split('~');
+          var px = parseFloat(f[3]);
+          if(!px || px <= 0) continue;
+          got[b[j]] = { px: px, str: px.toFixed(2), ts: f[30] || '',
+                        chg: isNaN(parseFloat(f[32])) ? null : parseFloat(f[32]) };
+        }
+        once(true);
+      };
+      s.onerror = function(){ once(false); };
+      setTimeout(function(){ once(false); }, 9000);
+      document.head.appendChild(s);
+    });
+  }
+  function applyQuotes(got){
+    var k, updated = 0, i, r;
+    for(k in got){
+      if(!got.hasOwnProperty(k)) continue;
+      if(!PX[k]) PX[k] = { px:0, str:'—', chg:null };
+      PX[k].px = got[k].px; PX[k].str = got[k].str;
+      PX[k].chg = got[k].chg; PX[k].ts = got[k].ts;
+      updated++;
+    }
+    for(i = 0; i < M.rows.length; i++){
+      r = M.rows[i];
+      var q = PX[r.c];
+      if(!q || !q.px) continue;
+      r.p = q.str;
+      r.u = r.e ? r1((r.e / q.px - 1) * 100) : null;
+      r.g = (r.h !== null && r.h !== undefined) ? r1((r.h / q.px - 1) * 100) : null;
+      qa('[data-row][data-code="' + r.c + '"]').forEach(function(el){ patchRow(el, r); });
+    }
+    return updated;
+  }
+
+  /* ── 交互 ─────────────────────────────────────────────────────── */
+  function stamp(){
+    var latest = '', k;
+    for(k in PX){
+      if(!PX[k] || !PX[k].ts) continue;
+      if(PX[k].ts > latest) latest = PX[k].ts;
+    }
+    if(latest && latest.length >= 14){
+      return latest.slice(0, 4) + '-' + latest.slice(4, 6) + '-' + latest.slice(6, 8) + ' ' +
+             latest.slice(8, 10) + ':' + latest.slice(10, 12);
+    }
+    return '刚刚';
+  }
+  function refresh(manual){
+    if(busy) return;
+    busy = true;
+    if(BTN) BTN.disabled = true;
+    if(MSG){ MSG.className = 'pxmsg'; MSG.textContent = '正在获取行情…'; }
+    var codes = M.rows.map(function(r){ return r.c; });
+    for(var k in M.pos){ if(M.pos.hasOwnProperty(k) && codes.indexOf(k) < 0) codes.push(k); }
+    loadQuotes(codes, function(got, failed){
+      busy = false;
+      if(BTN) BTN.disabled = false;
+      var n = 0, kk;
+      for(kk in got){ if(got.hasOwnProperty(kk)) n++; }
+      if(!n){
+        if(MSG){
+          MSG.className = 'pxmsg is-err';
+          MSG.textContent = '行情取不到（离线 / 被浏览器拦截 / 非交易时段），仍显示 ' + M.asof + ' 快照';
+        }
+        return;
+      }
+      var updated = applyQuotes(got);
+      fillAll();
+      patchPositions();
+      if(window.__wlSort) window.__wlSort();
+      if(ST) ST.innerHTML = '现价为 <b>' + stamp() + '</b> 实时行情 · 已重算潜在空间 / 距买点 / 分布 / 矩阵 / 持仓';
+      if(MSG){
+        MSG.className = 'pxmsg';
+        MSG.textContent = '更新 ' + updated + ' 只' +
+          (failed ? '（' + failed + ' 批失败）' : '') + ' · ' + new Date().toTimeString().slice(0, 8);
+      }
+    });
+  }
+  function inSession(d){
+    var day = d.getDay();
+    if(day === 0 || day === 6) return false;
+    var m = d.getHours() * 60 + d.getMinutes();
+    return (m >= 570 && m <= 690) || (m >= 780 && m <= 900);
+  }
+  function autoLoop(on){
+    if(timer){ clearInterval(timer); timer = null; }
+    if(!on) return;
+    timer = setInterval(function(){ if(inSession(new Date())) refresh(false); }, 60000);
+  }
+
+  if(BTN) BTN.addEventListener('click', function(){ refresh(true); });
+  if(AUTO){
+    var saved = '0';
+    try{ saved = localStorage.getItem('wl-pxauto') || '0'; }catch(e){}
+    AUTO.checked = (saved === '1');
+    if(AUTO.checked) autoLoop(true);
+    AUTO.addEventListener('change', function(){
+      autoLoop(AUTO.checked);
+      try{ localStorage.setItem('wl-pxauto', AUTO.checked ? '1' : '0'); }catch(e){}
+    });
+  }
 })();
 </script>
 </body>
