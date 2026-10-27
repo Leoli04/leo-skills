@@ -362,6 +362,25 @@ def main():
     o(pad("本周全部账户合计投入", 24) + pad(grand, 8, "right") + " 元")
     o("=" * 94)
 
+    # 档位图例（从 tier_rules 生成，避免说明与计算脱节）
+    lo = None
+    parts = []
+    for r in rules:
+        hi = r["max_percentile"]
+        if lo is None:
+            rng = "<%g%%" % hi
+        elif hi >= 100:
+            rng = ">%g%%" % lo
+        else:
+            rng = "%g-%g%%" % (lo, hi)
+        fac = "停投" if r["factor"] <= 0 else "%.1f×" % r["factor"]
+        parts.append("%s %s→%s" % (r["level"], rng, fac))
+        lo = hi
+    o("档位图例（分位→系数，周投额=base_weekly×系数）：")
+    for i in range(0, len(parts), 4):
+        o("   " + "   ".join(parts[i:i + 4]))
+    o("   「?」= 无分位数据，本周不分配，不等于不该买；D/E 档停投但不清仓。")
+
     # 重复暴露（空 index_code 表示无可用指数，不是「同一指数」）
     seen = {}
     for r in rows:

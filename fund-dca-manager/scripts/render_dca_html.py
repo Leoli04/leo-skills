@@ -118,6 +118,64 @@ def next_triggers(pct, rules, base_w):
     return up, down
 
 
+def tier_action(factor, cap_ratio):
+    """由系数与资金池上限推出该档的动作含义，规则改了含义跟着变，不写死在表里。"""
+    if factor <= 0:
+        return "停投持有，额度收紧" if cap_ratio < 0.3 else "停投持有"
+    if factor <= 0.5:
+        return "减速，只留底仓节奏"
+    if factor <= 1.0:
+        return "基准档，常规节奏"
+    if factor <= 2.0:
+        return "加码"
+    if factor <= 3.0:
+        return "大幅加码"
+    return "全力加码"
+
+
+def tier_range(i, rules):
+    lo = rules[i - 1]["max_percentile"] if i > 0 else None
+    hi = rules[i]["max_percentile"]
+    if lo is None:
+        return "＜%g%%" % hi
+    if hi >= 100:
+        return "＞%g%%" % lo
+    return "%g–%g%%" % (lo, hi)
+
+
+def rule_index(pct, rules):
+    if pct is None:
+        return None
+    for i, r in enumerate(rules):
+        if pct <= r["max_percentile"]:
+            return i
+    return None
+
+
+def tier_table(rules, funds=None):
+    """档位对照表。从 tier_rules 生成，改配置即改说明，避免说明与计算脱节。"""
+    hits = {}
+    for f in funds or []:
+        i = rule_index(f.get("pct"), rules)
+        if i is not None:
+            hits.setdefault(i, []).append(f.get("short") or f.get("name", ""))
+    p = ['<table><thead><tr><th>档</th><th>分位区间</th><th class="num">系数</th>'
+         '<th class="num">资金池上限</th><th>动作</th><th>本周落此档</th></tr></thead><tbody>']
+    for i, r in enumerate(rules):
+        f = r["factor"]
+        factor_txt = "停投" if f <= 0 else "%.1f×" % f
+        names = hits.get(i) or []
+        cell = "、".join(names) if names else '<span style="color:var(--ink3)">—</span>'
+        p.append('<tr><td><span class="tier t-%s">%s</span></td><td class="src">%s</td>'
+                 '<td class="num">%s</td><td class="num">%d%%</td>'
+                 '<td style="white-space:nowrap">%s</td><td class="src" style="white-space:normal">%s</td></tr>'
+                 % (esc(r["level"]), esc(r["level"]), tier_range(i, rules),
+                    factor_txt, round(r.get("cap_ratio", 0) * 100),
+                    esc(tier_action(f, r.get("cap_ratio", 0))), cell))
+    p.append('</tbody></table>')
+    return "".join(p)
+
+
 def esc(s):
     return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             .replace('"', "&quot;"))
@@ -347,6 +405,7 @@ h1{font-size:27px;font-weight:400;margin:0 0 8px;line-height:1.3}
 .kpi .h{font-size:10.5px;color:var(--ink3);margin-top:3px}
 h2{font-size:18px;font-weight:400;margin:38px 0 4px;letter-spacing:-.01em}
 h2 .n{color:var(--ink3);font-size:12px;letter-spacing:.1em;margin-right:9px;vertical-align:1px}
+h3{font-size:13.5px;font-weight:600;margin:22px 0 2px;color:var(--ink)}
 .note{font-size:12.5px;color:var(--ink3);margin:6px 0 0}
 table{width:100%;border-collapse:collapse;margin:12px 0;font-size:12.5px;background:var(--surface)}
 th{text-align:left;font-weight:600;font-size:11px;color:var(--ink3);letter-spacing:.04em;
@@ -410,7 +469,8 @@ h1{font-size:22px}table{font-size:11.5px}th,td{padding:7px 6px}}
 
     # 01 本周执行
     h.append('<h2><span class="n">01</span>本周执行</h2>')
-    h.append('<p class="note">账户预算互相独立、不可挪用；同一账户内按估值分位从低到高分配，最贵的先砍。</p>')
+    h.append('<p class="note">账户预算互相独立、不可挪用；同一账户内按估值分位从低到高分配，最贵的先砍。'
+             '「档」是分位落档的结果，各档对应的系数与周投额见 02 节档位表。</p>')
     for a in accounts:
         af = [f for f in funds if f["account"] == a["id"]]
         used = sum(f["week"] for f in af)
@@ -445,10 +505,34 @@ h1{font-size:22px}table{font-size:11.5px}th,td{padding:7px 6px}}
     if funds:
         h.append('<h2><span class="n">02</span>估值分位位置</h2>')
         h.append('<p class="note">色带与档位一一对应：<b>绿 ≤22%</b> 偏低可加码 · <b>米 22–47%</b> 中性减速 · '
-                 '<b>橙 47–70%</b> 偏贵停投 · <b>红 &gt;70%</b> 高估。分位窗口自 2016-07 起约 10.3 年。</p>')
+                 '<b>橙 47–70%</b> 偏贵停投 · <b>红 &gt;70%</b> 高估。分位窗口自 2016-07 起约 10.3 年，'
+                 '不含 2015 年那轮泡沫，所以严格说这是「2016-07 以来分位」而非「历史分位」。</p>')
         h.append('<div style="background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px 12px 6px">')
         h.append(svg_percentile(funds))
         h.append('</div>')
+
+        # 档位说明：只给徽标不给换算，读者无法自己复核金额
+        h.append('<h3>档位怎么换算成周投额</h3>')
+        h.append('<p class="note">档位由当前分位唯一决定，周投额 = 该基金的 <b>base_weekly</b> × 档位系数。'
+                 'base_weekly 是「B 档时每周投多少」，由资金池 ÷ 计划投入周数定，所以<b>同为 B 档的两只基金，'
+                 '绝对金额并不可比</b>。资金池上限是该档最多能动用本基金池子的比例，分位越低允许动用的越多，'
+                 '这是「越跌越有钱买」的机制来源。</p>')
+        h.append(tier_table(rules, funds))
+        dup_levels = {}
+        for r in rules:
+            dup_levels.setdefault(r["level"], []).append(r)
+        split = [lv for lv, rs in dup_levels.items() if len(rs) > 1]
+        note = ['<b>- 徽标</b>表示这只没有取到分位数据，本周不分配——是「不知道」，不是「不该买」，'
+                '补法见下方代理说明与告警节。',
+                '<b>停投 ≠ 清仓</b>：D/E 档只是停止买入，已有持仓继续持有，卖出走单独的止盈规则。']
+        if split:
+            note.append('<b>%s 分了两段</b>：同一徽标下系数不同，所以两只都显示 %s 的基金，'
+                        '周投额可以差一倍以上，要看分位具体落在哪一段。'
+                        % ("、".join(split), split[0]))
+        note.append('这张表的分档阈值、系数、资金池上限都可以改（配置里的 <b>tier_rules</b>），'
+                    '改完重跑，表格与分配金额会一起同步，不存在「文档写一套、脚本算一套」。')
+        for n_ in note:
+            h.append('<p class="note">· %s</p>' % n_)
 
         # 代理指数说明：分位是按代理指数算的，必须让读者看见用的是哪一只
         proxied = [f for f in funds if f.get("proxy")]
@@ -511,7 +595,7 @@ h1{font-size:22px}table{font-size:11.5px}th,td{padding:7px 6px}}
     h.append('<h2><span class="n">06</span>下一次档位切换点</h2>')
     h.append('<p class="note">只报金额不报触发条件等于没给结论。下表给出改变本周判断的临界分位：'
              '<b>升档</b> = 分位跌到该值以下就加码，<b>降档</b> = 分位涨过该值就减速或停投。'
-             '每只的周投额 = base_weekly × 该档系数。</p>')
+             '每只的周投额 = 该基金 base_weekly × 该档系数（系数表见 02 节）。</p>')
     h.append('<table><thead><tr><th>基金</th><th class="num">当前分位</th><th>当前档</th>'
              '<th>升档触发</th><th>降档触发</th></tr></thead><tbody>')
     for f in sorted(funds, key=lambda x: (x["pct"] if x["pct"] is not None else 999)):
