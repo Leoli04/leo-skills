@@ -109,6 +109,36 @@ python scripts/verify_math.py fee-drag 0.015 0.002 --years 20
 python scripts/verify_math.py ac-breakeven 0.0010 0.0020 --fees 0.0010,0.0015
 ```
 
+### 📊 fund-dca-manager
+
+多账户多基金定投的仓位管理与周度执行。与 `fund-etf-review` 分工明确：**review 管「买什么」，本 skill 管「怎么买、买多少、何时卖」**。
+
+- **核心机制**
+  1. **统一量纲用估值历史分位**，不用 PE 绝对值——创业板 PE 30 与沪深300 PE 13 不可比，只能比各自在历史中的位置
+  2. **双层决策**：单只按分位落档算理论投入额；账户层在预算不足时按分位从低到高分配，最贵的先砍
+  3. **新增额度天花板**：每只基金设独立额度，天花板 = 额度 × 档位比例。历史持仓不占新增额度，避免已大额存量的老基金一接入就被判停投
+  4. **四层止盈**：L1 停投（分位 >47%）→ L2 移动止盈（浮盈 40% 启动，自最高净值回撤 8% 清仓）→ L3 估值极值 → L4 时间复核（满 4 年收益 <10% 暂停复盘，不清仓）
+- **触发词**：「本周定投该投多少」「多只基金怎么分配」「什么时候加仓减仓」「定投止盈规则」「账户预算怎么分」
+- **核心文件**：
+  - `SKILL.md` — 与 review 的分工表、三条原则、Step 1–6 工作流、五条红线
+  - `references/tier_rules.md` — 分位档位系数表、窗口口径披露、`PB ÷ ROE = PE` 自检、`base_weekly` 定法
+  - `references/exit_rules.md` — 四层止盈、8% 回撤回测、场外基金不能做 T 的费率实证、三类大跌事件胜率表
+  - `references/accounts.md` — 多账户独立预算、重复暴露检测、季度再平衡
+- **依赖**：Python 3 标准库；估值分位来自蛋卷（雪球基金）指数估值接口
+
+```bash
+# 1. 算本周该投多少（查分位 → 落档 → 分账户分配预算 → 落盘 md + csv 台账）
+python scripts/dca_weekly.py
+
+# 2. 渲染可视化台账（单文件 HTML，零 CDN 零 JS，可打印）
+python scripts/render_dca_html.py
+
+# 3. 渲染并发布到资料库（已有节点原地覆盖，不产生重复条目）
+python scripts/publish_dca.py
+```
+
+> 台账按 ISO 周去重，同一周内重复运行不会重复记账。`actual` 列可手工改成实际成交额，下次运行按它累加。
+
 ## 使用方式
 
 将本仓库克隆后，把对应 skill 目录放入 CodeBuddy 的 skills 目录（`.codebuddy/skills/`），即可通过自然语言触发。
@@ -129,6 +159,22 @@ python scripts/verify_math.py ac-breakeven 0.0010 0.0020 --fees 0.0010,0.0015
 
 只说「帮我筛股票」走第一步；说「分析 XX 股票」走第二步；说「筛完顺便分析一下」则两步连跑。
 
+### 两个基金 skill 的关系
+
+同样是**先后串联**，不是二选一：
+
+```
+基金候选  →  fund-etf-review（选品：替代品 / 费率 / 业绩 / 回撤 / 持仓重叠）
+                  │  选定载体
+                  ▼
+            fund-dca-manager（执行：分位落档 / 账户预算分配 / 止盈触发）
+
+说「这只基金怎么样、有没有更便宜的载体」  → review
+说「本周定投投多少、三只都在跌先买哪只」  → manager
+```
+
+**不要越界**：manager 不做选品评估，review 不做仓位分配。想换标的要先走完 review，不要在定投执行阶段临时换。
+
 ## 目录结构
 
 ```
@@ -144,6 +190,10 @@ leo-skills/
 │   ├── SKILL.md
 │   ├── references/        # 权威判据清单
 │   └── scripts/           # 费率/临界点复算脚本
+├── fund-dca-manager/      # 基金定投仓位管理技能
+│   ├── SKILL.md
+│   ├── references/        # 档位系数 / 止盈规则 / 多账户
+│   └── scripts/           # 周度执行表 / HTML 台账 / 资料库发布
 ├── youtube-downloader/    # YouTube 下载技能
 │   ├── SKILL.md
 │   ├── README_zh.md
