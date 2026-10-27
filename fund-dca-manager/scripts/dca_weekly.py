@@ -222,11 +222,26 @@ def main():
     eva_cache = {}
     rows = []
     for fund in cfg["funds"]:
-        ic = fund["index_code"]
-        if ic not in eva_cache:
+        ic = fund.get("index_code") or ""
+        if ic and ic not in eva_cache:
             eva_cache[ic] = None if offline else fetch_eva(ic)
-        eva = eva_cache[ic]
+        eva = eva_cache.get(ic) if ic else None
         pct = eva["percentile"] * 100 if eva and eva.get("percentile") is not None else None
+        # PE=0 或分位为 0 的脏数据必须弃用（PB ÷ ROE ≈ PE 不自洽）
+        if eva and not eva.get("pe"):
+            eva = None
+            pct = None
+        src = "蛋卷" if pct is not None else "-"
+        # manual_percentile：蛋卷无该指数时由用户或外部研报手工填分位，优先级高于接口
+        manual = fund.get("manual_percentile")
+        if manual is not None and manual != "":
+            try:
+                pct = float(manual)
+                src = "手工"
+            except (TypeError, ValueError):
+                pass
+        if pct is None and not ic:
+            src = "无"
         tier = match_tier(pct, rules)
 
         base_w = fund.get("base_weekly", 0)
@@ -243,7 +258,7 @@ def main():
         need = min(want, room) if pool else want
 
         rows.append({
-            "fund": fund, "eva": eva, "pct": pct, "tier": tier,
+            "fund": fund, "eva": eva, "pct": pct, "tier": tier, "src": src,
             "want": want, "ceiling": ceiling, "invested": invested,
             "new_sum": new_sum, "cum_total": invested, "room": room,
             "need": need, "alloc": 0,
@@ -256,6 +271,9 @@ def main():
             [r for r in rows if r["account"] == acc["id"]],
             key=lambda r: (r["pct"] if r["pct"] is not None else 999),
         )
+        # 本周该账户已有任何记录 → 整周计划冻结，不再追加分配。
+        # 否则「同一个 ISO 周重跑」会给上周没分到的标的补钱，破坏幂等。
+        frozen = any("%s|%s" % (r["account"], r["fund"]["code"]) in week_done for r in mine)
         left = acc.get("weekly_budget_cap") or acc.get("weekly_budget_base") or 0
         for r in mine:
             key = "%s|%s" % (r["account"], r["fund"]["code"])
@@ -263,6 +281,11 @@ def main():
                 # 本周已执行过，不再分配、不重复累加
                 r["done"] = week_done[key]
                 r["alloc"] = 0
+                r["cum_total"] = r["invested"]
+                continue
+            if frozen:
+                r["alloc"] = 0
+                r["frozen"] = True
                 r["cum_total"] = r["invested"]
                 continue
             give = min(r["need"], left)
@@ -283,6 +306,7 @@ def main():
 
     head = (pad("序", 3) + pad("基金", 22) + pad("指数", 12) +
             pad("PE", 8, "right") + pad("分位", 7, "right") + pad("档", 4, "center") +
+            pad("源", 5, "center") +
             pad("理论", 6, "right") + pad("本周投", 7, "right") +
             pad("新增/额度", 15, "right"))
 
@@ -294,15 +318,18 @@ def main():
         )
         base_b = acc.get("weekly_budget_base") or 0
         cap_b = acc.get("weekly_budget_cap") or 0
-        used = sum(r["alloc"] for r in mine)
+        used_new = sum(r["alloc"] for r in mine)
+        used_done = sum(r.get("done", 0) for r in mine)
+        used = used_new + used_done
         grand += used
 
         o()
         o("─" * 94)
-        o("【%s】%s   资金池 %s 元   周预算 %d（上限 %d）   本周已用 %d，结余 %d"
+        o("【%s】%s   资金池 %s 元   周预算 %d（上限 %d）   本周已用 %d，结余 %d%s"
           % (acc["id"], acc.get("name", ""),
              "{:,}".format(acc.get("total_capital", 0)), base_b, cap_b,
-             used, cap_b - used))
+             used, cap_b - used,
+             "（含上周已执行 %d，本次新增 %d）" % (used_done, used_new) if used_done else ""))
         o("─" * 94)
         if not mine:
             o("  （该账户暂无基金，请在配置的 funds 里加 \"account\": \"%s\"）" % acc["id"])
@@ -318,12 +345,15 @@ def main():
             mark = ""
             if r.get("done"):
                 mark = "  ← 本周已执行 %d，本次不重复" % r["done"]
+            elif r.get("frozen") and r["need"] > 0:
+                mark = "  ← 本周账户计划已冻结（本应 %d）" % r["need"]
             elif r["need"] > 0 and r["alloc"] < r["need"]:
                 mark = "  ← 预算不足，本应 %d" % r["need"]
             elif r["want"] > 0 and r["need"] < r["want"]:
                 mark = "  ← 已达该档天花板 %d" % r["ceiling"]
             o(pad(i, 3) + pad(f["name"][:10], 22) + pad(idx_name, 12) +
               pad(pe, 8, "right") + pad(pct, 7, "right") + pad(lv, 4, "center") +
+              pad(r.get("src", "-"), 5, "center") +
               pad(r["want"], 6, "right") + pad(r["alloc"], 7, "right") +
               pad("%d/%d" % (round(r["new_sum"] + r["alloc"]), f.get("pool", 0)), 15, "right") + mark)
 
@@ -332,10 +362,13 @@ def main():
     o(pad("本周全部账户合计投入", 24) + pad(grand, 8, "right") + " 元")
     o("=" * 94)
 
-    # 重复暴露
+    # 重复暴露（空 index_code 表示无可用指数，不是「同一指数」）
     seen = {}
     for r in rows:
-        seen.setdefault(r["fund"]["index_code"], []).append(r)
+        ic = r["fund"].get("index_code") or ""
+        if not ic:
+            continue
+        seen.setdefault(ic, []).append(r)
     dup = {k: v for k, v in seen.items() if len(v) > 1}
     if dup:
         o()
@@ -348,6 +381,23 @@ def main():
     if stopped:
         o()
         o("停投（分位高于停投线，只持有不再买入）：%s" % "、".join(stopped))
+
+    proxied = [r for r in rows if r["fund"].get("index_proxy")]
+    if proxied:
+        o()
+        o("代理指数（该基金无对应指数估值，用下列指数代替，分位可信度打折）：")
+        for r in proxied:
+            px = r["fund"]["index_proxy"]
+            o("   %s ← %s → %s  %s"
+              % (r["fund"]["name"][:14], px.get("actual", "?"),
+                 r["fund"]["index_code"], px.get("note", "")))
+
+    nodata = [r["fund"]["name"] for r in rows if r["pct"] is None]
+    if nodata:
+        o()
+        o("⚠ 无估值分位（本周不分配，不代表不该买）：%s" % "、".join(nodata))
+        o("   原因：蛋卷无对应指数数据。补法：在配置里给该只加 manual_percentile 字段填分位值。")
+
     if any(r["need"] > r["alloc"] for r in rows):
         o()
         o("预算不足的标的已按估值分位排后，不是不买；下周分位变化后可能重新排前。")
@@ -377,10 +427,45 @@ def main():
 
     added = append_ledger(ledger_path, rows, run_date, asof, wk)
 
+    # 分位快照：本轮全部标的（含本周未投的），供渲染层画完整估值标尺。
+    # 只靠 ledger 不够——被砍到 0 的标的不进台账，页面上会退化成「无数据」。
+    snap = {
+        "run_date": run_date,
+        "data_date": asof,
+        "week": wk,
+        "accounts": [{"id": a["id"], "name": a.get("name", ""),
+                      "total_capital": a.get("total_capital", 0),
+                      "weekly_budget_base": a.get("weekly_budget_base", 0),
+                      "weekly_budget_cap": a.get("weekly_budget_cap", 0)}
+                     for a in accounts],
+        "funds": [{
+            "account": r["account"],
+            "code": r["fund"]["code"],
+            "name": r["fund"]["name"],
+            "index_code": r["fund"].get("index_code", ""),
+            "index_proxy": r["fund"].get("index_proxy"),
+            "pct": r["pct"],
+            "pe": (r["eva"] or {}).get("pe"),
+            "tier": r["tier"]["level"] if r["tier"] else "",
+            "src": r.get("src", "-"),
+            "want": r["want"], "alloc": r["alloc"],
+            "done": r.get("done", 0) or 0,
+            "ceiling": r["ceiling"], "pool": r["fund"].get("pool", 0),
+            "new_sum": round(r["new_sum"]), "invested": round(r["invested"]),
+            "cum_total": round(r["cum_total"]),
+            "new_total": round(r["cum_total"] - r["fund"].get("invested", 0)),
+            "need": r["need"],
+        } for r in rows],
+    }
+    snap_path = os.path.join(out_dir, "snapshot_%s.json" % run_date)
+    with open(snap_path, "w", encoding="utf-8") as f:
+        json.dump(snap, f, ensure_ascii=False, indent=1)
+
     o()
     o("─" * 94)
     o("已保存：")
     o("  快照  %s" % md_path)
+    o("  分位  %s" % snap_path)
     o("  台账  %s（本周 %s，本次新增 %d 条%s）"
       % (ledger_path, wk, added, "，本周已记录过则跳过" if added == 0 else ""))
     o("─" * 94)

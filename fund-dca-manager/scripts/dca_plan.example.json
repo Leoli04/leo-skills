@@ -7,10 +7,13 @@
     "accounts[].weekly_budget_base": "常规周预算",
     "accounts[].weekly_budget_cap": "估值极低时的周预算上限，一般取 base 的 2~2.5 倍",
     "funds[].account": "归属账户 id",
-    "funds[].index_code": "对应指数的蛋卷代码，用于自动查分位",
-    "funds[].pool": "该基金在本账户内的资金池上限",
-    "funds[].base_weekly": "中性档周投基准，实际投入 = base_weekly × 档位系数",
-    "funds[].invested / shares": "已投入金额 / 已持有份额"
+    "funds[].index_code": "对应指数的蛋卷代码，用于自动查分位；留空=无可用指数（该只本周不分配）",
+    "funds[].index_proxy": "代理关系。主动基金无直接对应指数时说明：actual=合同业绩基准，note=为什么用这个替代，可信度打折的原因。会打进终端与 HTML",
+    "funds[].manual_percentile": "手工填的分位（百分数，如 12.3）。蛋卷无数据时用，优先级高于接口",
+    "funds[].pool": "该基金在本账户内的资金池上限（只占新增额度，不含历史持仓）",
+    "funds[].base_weekly": "中性档周投基准，实际投入 = base_weekly × 档位系数。双周投的按 ÷2 折算成周",
+    "funds[].invested / shares": "启用台账前的历史持仓成本 / 已持有份额。invested 之后不要再改",
+    "funds[].platform": "可选，记录用户平台侧的实际设置（定投额/频率/策略），仅供对照，不参与计算"
   },
   "_可用指数代码": {
     "SZ399006": "创业板指",
@@ -100,7 +103,38 @@
       "invested": 2000,
       "shares": 1800.0,
       "base_weekly": 250,
-      "note": "示例数据，请替换为自己的实际持仓"
+      "note": "示例：指数对应精确，直接查分位"
+    },
+    {
+      "code": "000628",
+      "name": "大成高鑫股票A",
+      "account": "A",
+      "index_code": "SH000300",
+      "index_proxy": {
+        "actual": "中证800×80% + 恒生指数×10%",
+        "note": "示例：蛋卷无中证800，用沪深300 代替，分位可信度打折"
+      },
+      "pool": 15000,
+      "invested": 20000,
+      "shares": 4000.0,
+      "base_weekly": 100,
+      "note": "示例：主动基金走代理指数"
+    },
+    {
+      "code": "017513",
+      "name": "广发北证50成份指数C",
+      "account": "A",
+      "index_code": "",
+      "manual_percentile": 18.5,
+      "index_proxy": {
+        "actual": "北证50成份指数×95%",
+        "note": "示例：蛋卷无北证50，分位手工填（例如取自基金公司日评），填了才参与分配"
+      },
+      "pool": 7500,
+      "invested": 8000,
+      "shares": 6400.0,
+      "base_weekly": 50,
+      "note": "示例：无接口数据走 manual_percentile"
     }
   ]
 }

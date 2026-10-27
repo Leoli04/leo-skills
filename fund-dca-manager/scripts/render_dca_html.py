@@ -12,6 +12,7 @@
 ------------------------------------------------------------
 """
 import csv
+import glob
 import io
 import json
 import os
@@ -46,11 +47,18 @@ def load_ledger(path):
     rows = []
     with io.open(path, encoding="utf-8-sig", newline="") as f:
         for r in csv.DictReader(f):
-            for k in ("plan", "actual", "cumulative", "percentile"):
+            for k in ("plan", "actual", "cumulative"):
                 try:
                     r[k] = float(r.get(k) or 0)
                 except (TypeError, ValueError):
                     r[k] = 0.0
+            # 分位必须区分「无数据」与「真的 0.0%」：空串保留 None，
+            # 否则无数据标的分位会被画成 0%、误判为历史极值区
+            raw_pct = (r.get("percentile") or "").strip()
+            try:
+                r["percentile"] = float(raw_pct) if raw_pct != "" else None
+            except (TypeError, ValueError):
+                r["percentile"] = None
             try:
                 r["pe"] = float(r["pe"]) if r.get("pe") else None
             except (TypeError, ValueError):
@@ -60,6 +68,22 @@ def load_ledger(path):
     return rows
 
 
+def load_snapshot(ledger_path):
+    """读本轮分位快照（dca_weekly 落盘）。台账只记实际投出的标的，
+    被砍到 0 的根本不在里面，光靠 ledger 画不出完整估值标尺。"""
+    d = os.path.dirname(os.path.abspath(ledger_path))
+    if not os.path.isdir(d):
+        return None
+    files = sorted(glob.glob(os.path.join(d, "snapshot_*.json")))
+    if not files:
+        return None
+    try:
+        with io.open(files[-1], encoding="utf-8") as f:
+            return json.load(f)
+    except (ValueError, OSError):
+        return None
+
+
 def tier_of(pct, rules):
     if pct is None:
         return None
@@ -67,6 +91,31 @@ def tier_of(pct, rules):
         if pct <= r["max_percentile"]:
             return r
     return rules[-1]
+
+
+def next_triggers(pct, rules, base_w):
+    """返回 (升档, 降档)：改变本周结论的临界分位。升档=分位下跌，降档=分位上涨。"""
+    if pct is None:
+        return None
+    idx = None
+    for i, r in enumerate(rules):
+        if pct <= r["max_percentile"]:
+            idx = i
+            break
+    if idx is None:
+        return None
+    cur = rules[idx]
+    up = None
+    if idx > 0:
+        prev = rules[idx - 1]
+        up = (prev["max_percentile"], prev["level"], prev["factor"],
+              round(base_w * prev["factor"]))
+    down = None
+    if idx + 1 < len(rules):
+        nxt = rules[idx + 1]
+        down = (cur["max_percentile"], nxt["level"], nxt["factor"],
+                round(base_w * nxt["factor"]))
+    return up, down
 
 
 def esc(s):
@@ -86,7 +135,7 @@ def svg_percentile(funds):
     row_h = 30
     top = 26
     h = top + n * row_h + 26
-    left, bar_w = 116, 420
+    left, bar_w = 150, 390
     parts = ['<svg viewBox="0 0 660 %d" role="img" aria-label="各基金估值分位标尺">' % h]
     parts.append('<title>各基金估值历史分位</title>')
     # 背景带按档位分五段
@@ -186,7 +235,7 @@ def svg_cumulative(ledger, initial_total):
 
 
 # ---------- 主体 ----------
-def build(cfg, ledger, weeks):
+def build(cfg, ledger, weeks, snap=None):
     rules = cfg["tier_rules"]
     accounts = cfg["accounts"]
     total_cap = sum(a.get("total_capital", 0) for a in accounts)
@@ -203,6 +252,12 @@ def build(cfg, ledger, weeks):
     for f in cfg["funds"]:
         base_inv[(f["account"], f["code"])] = f.get("invested", 0)
 
+    # 本轮分位快照优先（含本周未投的标的），没快照才退回台账记录
+    snap_map = {}
+    if snap:
+        for s in snap.get("funds", []):
+            snap_map[(s.get("account"), s.get("code"))] = s
+
     last_date = max([r["run_date"] for r in ledger], default=time.strftime("%Y-%m-%d"))
     week_rows = [r for r in ledger if r["run_date"] == last_date]
 
@@ -210,18 +265,36 @@ def build(cfg, ledger, weeks):
     for f in cfg["funds"]:
         key = (f["account"], f["code"])
         rec = latest.get(key)
-        pct = rec["percentile"] if rec else None
-        tier = tier_of(pct, rules) if pct else None
-        cum_v = cum.get(key, base_inv.get(key, 0))
+        s = snap_map.get(key)
         bi = base_inv.get(key, 0)
+        if s:
+            pct = s.get("pct")
+            pe = s.get("pe")
+            week_v = (s.get("done", 0) or 0) + (s.get("alloc", 0) or 0)
+            tier_lv = s.get("tier") or "-"
+            src = s.get("src", "-")
+            proxy = s.get("index_proxy")
+            cum_v = s.get("cum_total") or (s.get("invested", 0) or 0) + (s.get("alloc", 0) or 0)
+            new_v = s.get("new_total")
+            if new_v is None:
+                new_v = (s.get("new_sum", 0) or 0) + (s.get("alloc", 0) or 0)
+        else:
+            pct = rec["percentile"] if rec else None
+            pe = rec["pe"] if rec else None
+            week_v = rec["actual"] if rec else 0
+            t = tier_of(pct, rules) if pct is not None else None
+            tier_lv = t["level"] if t else "-"
+            src = "-"
+            proxy = f.get("index_proxy")
+            cum_v = cum.get(key, bi)
+            new_v = max(0, cum_v - bi)
         funds.append({
             "code": f["code"], "name": f["name"], "short": f["name"][:10],
             "account": f["account"], "index": f.get("index_code", ""),
-            "pe": rec["pe"] if rec else None,
-            "pct": pct, "tier": tier["level"] if tier else "-",
-            "week": rec["actual"] if rec else 0,
-            "cum": cum_v, "pool": f.get("pool", 0) or 1,
-            "base_inv": bi, "new": max(0, cum_v - bi),
+            "pe": pe, "pct": pct, "tier": tier_lv, "src": src, "proxy": proxy,
+            "week": week_v, "cum": cum_v, "pool": f.get("pool", 0) or 1,
+            "base_inv": bi, "new": new_v,
+            "base_w": f.get("base_weekly", 0),
         })
 
     week_total = sum(f["week"] for f in funds)
@@ -234,12 +307,18 @@ def build(cfg, ledger, weeks):
     alerts = []
     seen_idx = {}
     for f in funds:
+        if not f["index"]:
+            continue
         seen_idx.setdefault(f["index"], []).append(f["name"])
     for ic, names in seen_idx.items():
         if len(names) > 1:
             alerts.append(("重复暴露", "%s 被 %d 只基金跟踪：%s" % (ic, len(names), "、".join(names)),
                            "同一风险押两次，建议合并或把 pool 合计控在单指数上限内"))
     for f in funds:
+        if f["pct"] is None:
+            alerts.append(("无估值分位", f["name"] + " 未取到对应指数估值",
+                           "本周不分配，但不代表不该买。补法：在 dca_plan.json 里给这只加 "
+                           "manual_percentile 字段手工填分位值，重跑即恢复档位"))
         if f["pct"] is not None and f["pct"] > 47:
             alerts.append(("停投", f["name"] + " 分位 %.1f%%" % f["pct"], "高于停投线，只持有不再买入"))
         if f["new"] / f["pool"] > 0.9:
@@ -275,6 +354,8 @@ padding:8px 10px;border-bottom:1.5px solid var(--line2);white-space:nowrap}
 td{padding:9px 10px;border-bottom:1px solid var(--line);color:var(--ink2)}
 td:first-child{color:var(--ink);font-weight:500}
 .num{text-align:right;font-variant-numeric:tabular-nums}
+.src{font-size:11px;color:var(--ink3);white-space:nowrap}
+.idx{font-family:ui-monospace,Consolas,monospace;font-size:11px;color:var(--ink3);white-space:nowrap}
 .acc{background:var(--surface);border:1px solid var(--line);border-radius:10px;
 padding:16px 18px;margin:12px 0;border-left:3px solid var(--brand)}
 .acc__h{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;flex-wrap:wrap;gap:8px}
@@ -287,8 +368,10 @@ padding:16px 18px;margin:12px 0;border-left:3px solid var(--brand)}
 .mini>i{display:block;height:5px;background:var(--buy);min-width:2px}
 .tier{display:inline-block;font-size:10.5px;padding:1px 6px;border-radius:4px;font-weight:600}
 .t-S{background:#E4F0EA;color:#0F5A3C}.t-A{background:#E9F1EC;color:#1E6B4A}
+.t-A\\+{background:#DDEDE4;color:#14603F}
 .t-B{background:#F1EEE6;color:#5B5750}.t-C{background:#FAF0DC;color:#8A6410}
 .t-D,.t-E{background:#F8E6E3;color:#9C2A20}
+.t--{background:#EFECE5;color:#8A857C}
 .alert{background:#FBF0EE;border:1px solid #EDD6D2;border-radius:9px;padding:12px 15px;margin:10px 0}
 .alert .t{font-weight:600;color:var(--warn);font-size:12.5px;margin-bottom:2px}
 .alert .d{font-size:12px;color:#7A4A43}
@@ -342,13 +425,16 @@ h1{font-size:22px}table{font-size:11.5px}th,td{padding:7px 6px}}
                  % (money(used), money(cap - used)))
         if af:
             h.append('<table><thead><tr><th>基金</th><th class="num">PE</th><th class="num">分位</th>'
-                     '<th>档</th><th class="num">本周投</th><th class="num">新增/额度</th></tr></thead><tbody>')
+                     '<th>档</th><th>数据源</th><th class="num">本周投</th>'
+                     '<th class="num">新增/额度</th></tr></thead><tbody>')
             for f in sorted(af, key=lambda x: (x["pct"] if x["pct"] is not None else 999)):
+                src = f.get("src") or "-"
                 h.append('<tr><td>%s</td><td class="num">%s</td><td class="num">%s</td>'
-                         '<td><span class="tier t-%s">%s</span></td><td class="num">%s</td><td class="num">%s/%s</td></tr>'
+                         '<td><span class="tier t-%s">%s</span></td><td class="src">%s</td>'
+                         '<td class="num">%s</td><td class="num">%s/%s</td></tr>'
                          % (esc(f["name"]), "%.2f" % f["pe"] if f["pe"] else "-",
                             "%.1f%%" % f["pct"] if f["pct"] is not None else "-",
-                            esc(f["tier"]), esc(f["tier"]), money(f["week"]),
+                            esc(f["tier"]), esc(f["tier"]), esc(src), money(f["week"]),
                             money(f["new"]), money(f["pool"])))
             h.append('</tbody></table>')
         else:
@@ -363,6 +449,22 @@ h1{font-size:22px}table{font-size:11.5px}th,td{padding:7px 6px}}
         h.append('<div style="background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px 12px 6px">')
         h.append(svg_percentile(funds))
         h.append('</div>')
+
+        # 代理指数说明：分位是按代理指数算的，必须让读者看见用的是哪一只
+        proxied = [f for f in funds if f.get("proxy")]
+        if proxied:
+            h.append('<p class="note" style="margin-top:16px">下面这些基金没有对应的指数估值，'
+                     '分位是用<b>代理指数</b>算的，可信度按代理关系的紧密程度打折：</p>')
+            h.append('<table><thead><tr><th>基金</th><th>合同业绩基准</th>'
+                     '<th>实际使用</th><th>代理说明</th></tr></thead><tbody>')
+            for f in proxied:
+                px = f["proxy"] or {}
+                used = f["index"] or "无（本周不分配）"
+                h.append('<tr><td>%s</td><td class="src">%s</td><td class="idx">%s</td>'
+                         '<td class="src" style="white-space:normal">%s</td></tr>'
+                         % (esc(f["name"]), esc(px.get("actual", "-")),
+                            esc(used), esc(px.get("note", ""))))
+            h.append('</tbody></table>')
 
     # 03 持仓与天花板
     h.append('<h2><span class="n">03</span>持仓与新增额度使用</h2>')
@@ -383,13 +485,18 @@ h1{font-size:22px}table{font-size:11.5px}th,td{padding:7px 6px}}
     # 04 累计曲线
     initial_total = sum(f.get("invested", 0) for f in cfg["funds"])
     cur_svg = svg_cumulative(ledger, initial_total)
+    h.append('<h2><span class="n">04</span>累计投入曲线</h2>')
     if cur_svg:
-        h.append('<h2><span class="n">04</span>累计投入曲线</h2>')
         h.append('<p class="note">含启用本台账前的历史持仓基数 %s 元，之后按每周记录累加。'
                  '曲线突然变陡 = 某周发生了超常投入，值得回看当时的判断依据。</p>' % money(initial_total))
         h.append('<div style="background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px 12px 6px">')
         h.append(cur_svg)
         h.append('</div>')
+    else:
+        _days = len(set(r.get("run_date", "") for r in ledger))
+        h.append('<p class="note">台账目前只有 %d 个记录日，至少需要两周才能画出趋势。'
+                 '起点基数 %s 元（启用台账前的历史持仓成本），之后每周按 actual 累加。</p>'
+                 % (_days, money(initial_total)))
 
     # 05 告警
     h.append('<h2><span class="n">05</span>告警与检查</h2>')
@@ -400,17 +507,46 @@ h1{font-size:22px}table{font-size:11.5px}th,td{padding:7px 6px}}
     else:
         h.append('<p class="note">无重复暴露、无停投标的、无逼近天花板的持仓。</p>')
 
-    # 06 历史台账
-    h.append('<h2><span class="n">06</span>历史记录</h2>')
+    # 06 下一次档位切换
+    h.append('<h2><span class="n">06</span>下一次档位切换点</h2>')
+    h.append('<p class="note">只报金额不报触发条件等于没给结论。下表给出改变本周判断的临界分位：'
+             '<b>升档</b> = 分位跌到该值以下就加码，<b>降档</b> = 分位涨过该值就减速或停投。'
+             '每只的周投额 = base_weekly × 该档系数。</p>')
+    h.append('<table><thead><tr><th>基金</th><th class="num">当前分位</th><th>当前档</th>'
+             '<th>升档触发</th><th>降档触发</th></tr></thead><tbody>')
+    for f in sorted(funds, key=lambda x: (x["pct"] if x["pct"] is not None else 999)):
+        tg = next_triggers(f["pct"], rules, f.get("base_w", 0))
+        pct_txt = ("%.1f%%" % f["pct"]) if f["pct"] is not None else "-"
+        if not tg:
+            h.append('<tr><td>%s</td><td class="num">%s</td>'
+                     '<td><span class="tier t--">-</span></td>'
+                     '<td class="src" colspan="2">无分位数据，无法给出触发条件</td></tr>'
+                     % (esc(f["name"]), pct_txt))
+            continue
+        up, down = tg
+        up_txt = ("跌到 %.0f%% 以下 → %s %.1f× → %s 元/周" % up) if up else "已是最低档"
+        down_txt = ("涨过 %.0f%% → %s %.1f× → %s 元/周" % down) if down else "已是最高档"
+        h.append('<tr><td>%s</td><td class="num">%s</td>'
+                 '<td><span class="tier t-%s">%s</span></td>'
+                 '<td class="src" style="white-space:normal">%s</td>'
+                 '<td class="src" style="white-space:normal">%s</td></tr>'
+                 % (esc(f["name"]), pct_txt, esc(f["tier"]), esc(f["tier"]),
+                    esc(up_txt), esc(down_txt)))
+    h.append('</tbody></table>')
+
+    # 07 历史台账
+    h.append('<h2><span class="n">07</span>历史记录</h2>')
     h.append('<p class="note">最近 %d 条记录，倒序。完整数据见同目录 ledger.csv。</p>' % min(weeks * 4, len(ledger)))
     h.append('<table><thead><tr><th>周次</th><th>记录日</th><th>账户</th><th>基金</th>'
              '<th class="num">分位</th><th>档</th><th class="num">投入</th><th class="num">累计</th></tr></thead><tbody>')
     for r in list(reversed(ledger))[: weeks * 4]:
-        h.append('<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td class="num">%.1f%%</td>'
+        rp = r["percentile"]
+        pct_txt = ("%.1f%%" % rp) if rp is not None else "-"
+        h.append('<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td class="num">%s</td>'
                  '<td><span class="tier t-%s">%s</span></td><td class="num">%s</td><td class="num">%s</td></tr>'
                  % (esc(r.get("iso_week", "")), esc(r.get("run_date", "")), esc(r.get("account", "")),
-                    esc(r.get("fund_name", "")), r["percentile"], esc(r.get("tier", "")),
-                    esc(r.get("tier", "")), money(r["actual"]), money(r["cumulative"])))
+                    esc(r.get("fund_name", "")), pct_txt, esc(r.get("tier", "") or "-"),
+                    esc(r.get("tier", "") or "-"), money(r["actual"]), money(r["cumulative"])))
     h.append('</tbody></table>')
 
     # footer
@@ -442,8 +578,9 @@ def main():
     if not ledger:
         print("台账为空，先运行 dca_weekly.py 生成记录")
         return 1
+    snap = load_snapshot(ledger_path)
 
-    html = build(cfg, ledger, weeks)
+    html = build(cfg, ledger, weeks, snap)
     if not out:
         last = max(r["run_date"] for r in ledger)
         out = os.path.join(base, "定投台账_%s.html" % last)

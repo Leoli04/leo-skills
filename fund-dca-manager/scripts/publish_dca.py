@@ -19,12 +19,30 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LIB_DIR = ("C:/Users/MrLi/AppData/Local/Programs/WorkBuddy/resources/"
            "app.asar.unpacked/resources/plugins/workbuddy-builtin/skills/library")
 SPACE_ID = "lWmChDNEl28HPp3VjuY5W7"
 FOLDER_ID = "ujlYAui5OmAlkvfEjReBOW"
+
+
+def find_lib_dir():
+    """自动定位 library skill 目录（各机器用户名不同，不能硬编码）"""
+    rel = os.path.join("resources", "app.asar.unpacked", "resources", "plugins",
+                       "workbuddy-builtin", "skills", "library")
+    cands = []
+    for env in ("LOCALAPPDATA", "APPDATA"):
+        base = os.environ.get(env)
+        if base:
+            cands.append(os.path.join(base, "Programs", "WorkBuddy", rel))
+    cands.append(os.path.join(os.path.expanduser("~"), "AppData", "Local",
+                              "Programs", "WorkBuddy", rel))
+    for c in cands:
+        if os.path.exists(os.path.join(c, "page", "import_html.py")):
+            return c
+    return ""
 
 
 def arg(name, default=None):
@@ -39,11 +57,20 @@ def main():
     cfg_path = arg("--config", os.path.join(HERE, "dca_plan.json"))
     no_upload = "--no-upload" in sys.argv
     rebuild = "--rebuild" in sys.argv
-    lib_dir = arg("--lib-dir", LIB_DIR)
+    lib_dir = arg("--lib-dir", "") or find_lib_dir() or LIB_DIR
+
+    # 0) 读配置：台账与产物路径都跟配置走，不落到 skill 安装目录
+    with io.open(cfg_path, encoding="utf-8") as f:
+        cfg = json.load(f)
+    cfg_dir = os.path.dirname(os.path.abspath(cfg_path))
+    out_dir = cfg.get("output_dir") or os.path.join(cfg_dir, "定投记录")
+    ledger_path = os.path.join(out_dir, "ledger.csv")
 
     # 1) 渲染
     render = os.path.join(HERE, "render_dca_html.py")
-    r = subprocess.run([sys.executable, render, "--config", cfg_path],
+    out_html = os.path.join(cfg_dir, "定投台账_%s.html" % time.strftime("%Y-%m-%d"))
+    r = subprocess.run([sys.executable, render, "--config", cfg_path,
+                        "--ledger", ledger_path, "--out", out_html],
                        cwd=HERE, capture_output=True, text=True, encoding="utf-8", errors="replace")
     print(r.stdout.strip() or r.stderr.strip())
     if r.returncode != 0:
@@ -60,8 +87,6 @@ def main():
         return 0
 
     # 2) 读配置里的节点信息
-    with io.open(cfg_path, encoding="utf-8") as f:
-        cfg = json.load(f)
     lib = cfg.get("library", {}) or {}
     node_id = "" if rebuild else lib.get("node_block_id", "")
     space_id = lib.get("space_id", SPACE_ID)
