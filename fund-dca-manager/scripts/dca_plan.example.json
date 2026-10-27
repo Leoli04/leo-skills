@@ -1,0 +1,106 @@
+{
+  "_说明": "多账户定投配置。改完跑 python dca_weekly.py",
+  "_字段": {
+    "accounts": "账户数组。每个账户独立资金池与周预算，互不挪用",
+    "accounts[].id": "账户代号，funds 里用它归属",
+    "accounts[].total_capital": "该账户可用于定投的总资金",
+    "accounts[].weekly_budget_base": "常规周预算",
+    "accounts[].weekly_budget_cap": "估值极低时的周预算上限，一般取 base 的 2~2.5 倍",
+    "funds[].account": "归属账户 id",
+    "funds[].index_code": "对应指数的蛋卷代码，用于自动查分位",
+    "funds[].pool": "该基金在本账户内的资金池上限",
+    "funds[].base_weekly": "中性档周投基准，实际投入 = base_weekly × 档位系数",
+    "funds[].invested / shares": "已投入金额 / 已持有份额"
+  },
+  "_可用指数代码": {
+    "SZ399006": "创业板指",
+    "SZ399001": "深证成指",
+    "SH000300": "沪深300",
+    "SH000016": "上证50",
+    "SH000905": "中证500",
+    "SH000852": "中证1000",
+    "SH000903": "中证100",
+    "SH000688": "科创50",
+    "SH000922": "中证红利",
+    "CSIH30533": "中概互联50",
+    "SZ399997": "中证白酒",
+    "SZ399989": "中证医疗",
+    "SH000827": "中证环保"
+  },
+  "_蛋卷无数据": "CSIH30184 半导体、SZ399808 中证新能、SH000998 中证TMT、SZ399673 创业板50、SZ399005 中小100、SH000985 中证全指",
+  "accounts": [
+    {
+      "id": "A",
+      "name": "主账户",
+      "total_capital": 45000,
+      "weekly_budget_base": 250,
+      "weekly_budget_cap": 600,
+      "_备注": "示例金额，请按实际修改"
+    },
+    {
+      "id": "B",
+      "name": "副账户",
+      "total_capital": 15000,
+      "weekly_budget_base": 100,
+      "weekly_budget_cap": 240,
+      "_备注": "金额待确认；该账户的基金请在下方 funds 里加 account: B"
+    }
+  ],
+  "tier_rules": [
+    {
+      "max_percentile": 3,
+      "level": "S",
+      "factor": 4.0,
+      "cap_ratio": 1.0
+    },
+    {
+      "max_percentile": 6,
+      "level": "A+",
+      "factor": 3.0,
+      "cap_ratio": 0.9
+    },
+    {
+      "max_percentile": 10,
+      "level": "A+",
+      "factor": 2.0,
+      "cap_ratio": 0.9
+    },
+    {
+      "max_percentile": 22,
+      "level": "B",
+      "factor": 1.0,
+      "cap_ratio": 0.6
+    },
+    {
+      "max_percentile": 47,
+      "level": "C",
+      "factor": 0.5,
+      "cap_ratio": 0.35
+    },
+    {
+      "max_percentile": 70,
+      "level": "D",
+      "factor": 0.0,
+      "cap_ratio": 0.35
+    },
+    {
+      "max_percentile": 100,
+      "level": "E",
+      "factor": 0.0,
+      "cap_ratio": 0.2
+    }
+  ],
+  "funds": [
+    {
+      "code": "001592",
+      "name": "天弘创业板ETF联接A",
+      "account": "A",
+      "index_code": "SZ399006",
+      "pool": 45000,
+      "invested": 2000,
+      "shares": 1800.0,
+      "base_weekly": 250,
+      "note": "示例数据，请替换为自己的实际持仓"
+    }
+  ]
+}
