@@ -1,6 +1,8 @@
 {
   "_说明": "多账户定投配置。改完跑 python dca_weekly.py",
   "_字段": {
+    "holdings_ref": "持仓台账相对路径（含 amount/cost）。给上就出「持仓评估与建议」节，缺文件则该节显示提示并跳过",
+    "nav_cache": "净值缓存文件名（与 holdings_ref 同目录），评估节用它算份额与盈亏；缺省 _nav_cache.json",
     "accounts": "账户数组。每个账户独立资金池与周预算，互不挪用",
     "accounts[].id": "账户代号，funds 里用它归属",
     "accounts[].total_capital": "该账户可用于定投的总资金",
@@ -49,6 +51,8 @@
       "_备注": "金额待确认；该账户的基金请在下方 funds 里加 account: B"
     }
   ],
+  "holdings_ref": "",
+  "nav_cache": "_nav_cache.json",
   "tier_rules": [
     {
       "max_percentile": 3,
