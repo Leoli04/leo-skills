@@ -97,7 +97,9 @@ def fetch_eva(index_code):
         return {
             "pe": d.get("pe"),
             "pb": d.get("pb"),
+            "roe": d.get("roe"),
             "percentile": d.get("pe_percentile"),
+            "pb_percentile": d.get("pb_percentile"),
             "date": d.get("date"),
             "name": d.get("name"),
         }
@@ -113,6 +115,44 @@ def match_tier(percentile, rules):
         if percentile <= r["max_percentile"]:
             return r
     return rules[-1]
+
+
+def tier_index(percentile, rules):
+    if percentile is None:
+        return None
+    for i, r in enumerate(rules):
+        if percentile <= r["max_percentile"]:
+            return i
+    return len(rules) - 1
+
+
+def pb_check(pct, pb_pct, rules, gap=20.0):
+    """PB 分位校验 PE 分位，返回 (档位dict, 原始档位dict, 说明)。
+
+    为什么需要这一步：PE = PB ÷ ROE，PE 分位偏高可能只是盈利分母变小，
+    而不是价格变贵。PB 分位不受盈利周期扭曲——PB 不比历史贵、PE 却贵，
+    说明是盈利下滑（周期底部的典型形态），此时停投是错误的。
+    反向同理：PE 便宜而 PB 贵，是盈利虚高，该降档。
+
+    修正上限 ±1 档，绝不越级；差额未达 gap 个百分点则不动。
+    """
+    idx = tier_index(pct, rules)
+    if idx is None:
+        return None, None, ""
+    raw = rules[idx]
+    if pb_pct is None or pb_pct == "":
+        return raw, raw, ""
+    try:
+        d = float(pb_pct) - float(pct)
+    except (TypeError, ValueError):
+        return raw, raw, ""
+    if d <= -gap:
+        ni = max(0, idx - 1)
+        return rules[ni], raw, "PB 分位比 PE 低 %.0fpct，上修 1 档" % (-d)
+    if d >= gap:
+        ni = min(len(rules) - 1, idx + 1)
+        return rules[ni], raw, "PB 分位比 PE 高 %.0fpct，下修 1 档" % d
+    return raw, raw, ""
 
 
 # ---------- 台账 ----------
@@ -221,16 +261,22 @@ def main():
     # 取数分档
     eva_cache = {}
     rows = []
+    anc = cfg.get("anchors") or {}
+    pbc = anc.get("pb_check") or {}
+    gap_pct = float(pbc.get("gap_pct", 20.0))
     for fund in cfg["funds"]:
         ic = fund.get("index_code") or ""
         if ic and ic not in eva_cache:
             eva_cache[ic] = None if offline else fetch_eva(ic)
         eva = eva_cache.get(ic) if ic else None
         pct = eva["percentile"] * 100 if eva and eva.get("percentile") is not None else None
+        pb_pct = (eva["pb_percentile"] * 100
+                  if eva and eva.get("pb_percentile") is not None else None)
         # PE=0 或分位为 0 的脏数据必须弃用（PB ÷ ROE ≈ PE 不自洽）
         if eva and not eva.get("pe"):
             eva = None
             pct = None
+            pb_pct = None
         src = "蛋卷" if pct is not None else "-"
         # manual_percentile：蛋卷无该指数时由用户或外部研报手工填分位，优先级高于接口
         manual = fund.get("manual_percentile")
@@ -238,11 +284,16 @@ def main():
             try:
                 pct = float(manual)
                 src = "手工"
+                pb_pct = None      # 手工分位没有配套 PB 分位，不做校验
             except (TypeError, ValueError):
                 pass
         if pct is None and not ic:
             src = "无"
-        tier = match_tier(pct, rules)
+        # 双锚定档：PE 分位定档，PB 分位做 ±1 档校验（可在 anchors 里关掉）
+        if pbc.get("enabled", True):
+            tier, tier_raw, tier_note = pb_check(pct, pb_pct, rules, gap=gap_pct)
+        else:
+            tier, tier_raw, tier_note = match_tier(pct, rules), None, ""
 
         base_w = fund.get("base_weekly", 0)
         want = round(base_w * tier["factor"]) if tier else 0
@@ -259,6 +310,7 @@ def main():
 
         rows.append({
             "fund": fund, "eva": eva, "pct": pct, "tier": tier, "src": src,
+            "pb_pct": pb_pct, "tier_raw": tier_raw, "tier_note": tier_note,
             "want": want, "ceiling": ceiling, "invested": invested,
             "new_sum": new_sum, "cum_total": invested, "room": room,
             "need": need, "alloc": 0,
@@ -304,9 +356,9 @@ def main():
       % (asof, run_date, len(accounts), len(rows)))
     o("=" * 94)
 
-    head = (pad("序", 3) + pad("基金", 22) + pad("指数", 12) +
-            pad("PE", 8, "right") + pad("分位", 7, "right") + pad("档", 4, "center") +
-            pad("源", 5, "center") +
+    head = (pad("序", 3) + pad("基金", 20) + pad("指数", 11) +
+            pad("PE", 8, "right") + pad("分位", 7, "right") + pad("PB分位", 7, "right") +
+            pad("档", 6, "center") + pad("源", 5, "center") +
             pad("理论", 6, "right") + pad("本周投", 7, "right") +
             pad("新增/额度", 15, "right"))
 
@@ -341,7 +393,10 @@ def main():
             idx_name = (e["name"] if e else "-")[:6]
             pe = ("%.2f" % e["pe"]) if e and e.get("pe") else "-"
             pct = ("%.1f%%" % r["pct"]) if r["pct"] is not None else "-"
+            pbp = ("%.1f%%" % r["pb_pct"]) if r.get("pb_pct") is not None else "-"
             lv = t["level"] if t else "?"
+            if r.get("tier_raw") and t and r["tier_raw"]["level"] != t["level"]:
+                lv = "%s←%s" % (t["level"], r["tier_raw"]["level"])
             mark = ""
             if r.get("done"):
                 mark = "  ← 本周已执行 %d，本次不重复" % r["done"]
@@ -351,15 +406,25 @@ def main():
                 mark = "  ← 预算不足，本应 %d" % r["need"]
             elif r["want"] > 0 and r["need"] < r["want"]:
                 mark = "  ← 已达该档天花板 %d" % r["ceiling"]
-            o(pad(i, 3) + pad(f["name"][:10], 22) + pad(idx_name, 12) +
-              pad(pe, 8, "right") + pad(pct, 7, "right") + pad(lv, 4, "center") +
+            if r.get("tier_note"):
+                mark += "  ⚑ " + r["tier_note"]
+            o(pad(i, 3) + pad(f["name"][:9], 21) + pad(idx_name[:5], 11) +
+              pad(pe, 8, "right") + pad(pct, 7, "right") + pad(pbp, 7, "right") +
+              pad(lv, 6, "center") +
               pad(r.get("src", "-"), 5, "center") +
               pad(r["want"], 6, "right") + pad(r["alloc"], 7, "right") +
               pad("%d/%d" % (round(r["new_sum"] + r["alloc"]), f.get("pool", 0)), 15, "right") + mark)
 
     o()
     o("=" * 94)
-    o(pad("本周全部账户合计投入", 24) + pad(grand, 8, "right") + " 元")
+    o(pad("本周全部账户合计投入", 24) + pad(round(grand), 8, "right") + " 元")
+    budget_all = sum((acc.get("weekly_budget_cap") or 0) for acc in accounts)
+    if budget_all:
+        o(pad("账户周预算合计", 24) + pad(round(budget_all), 8, "right") + " 元"
+          + "      使用率 %.0f%%   未动用 %d 元"
+          % (grand * 100.0 / budget_all, round(budget_all - grand)))
+        if grand < budget_all:
+            o("   未动用的部分不是浪费：分位不支持买入时留着，等分位下来才有子弹。")
     o("=" * 94)
 
     # 档位图例（从 tier_rules 生成，避免说明与计算脱节）
@@ -380,6 +445,10 @@ def main():
     for i in range(0, len(parts), 4):
         o("   " + "   ".join(parts[i:i + 4]))
     o("   「?」= 无分位数据，本周不分配，不等于不该买；D/E 档停投但不清仓。")
+    if pbc.get("enabled", True):
+        o("   双锚校验：PB 分位比 PE 分位低 %.0fpct 以上 → 上修 1 档（PE 高是盈利下滑，"
+          "不是价格贵）；高 %.0fpct 以上 → 下修 1 档（盈利虚高）。上限 ±1 档。"
+          % (gap_pct, gap_pct))
 
     # 重复暴露（空 index_code 表示无可用指数，不是「同一指数」）
     seen = {}
@@ -396,10 +465,17 @@ def main():
             o("   %s → %s" % (ic, "、".join(x["fund"]["name"] for x in v)))
         o("   建议只保留费率最低的一只，或把 pool 合计控制在单指数目标上限内。")
 
-    stopped = [r["fund"]["name"] for r in rows if r["tier"] and r["tier"]["factor"] == 0]
+    stopped = [r for r in rows if r["tier"] and r["tier"]["factor"] == 0]
     if stopped:
         o()
-        o("停投（分位高于停投线，只持有不再买入）：%s" % "、".join(stopped))
+        o("停投（高于停投线，只持有不再买入）：")
+        for r in stopped:
+            pb_txt = ("%.1f%%" % r["pb_pct"]) if r.get("pb_pct") is not None else "无"
+            dual = r.get("pb_pct") is not None and r["pb_pct"] >= 47
+            o("   %s  PE分位 %s / PB分位 %s　%s" % (
+                pad(r["fund"]["name"][:14], 28),
+                ("%.1f%%" % r["pct"]) if r["pct"] is not None else "-", pb_txt,
+                "两锚共振确认偏贵" if dual else "仅 PE 分位偏高，PB 未同向确认"))
 
     proxied = [r for r in rows if r["fund"].get("index_proxy")]
     if proxied:
@@ -465,7 +541,13 @@ def main():
             "index_proxy": r["fund"].get("index_proxy"),
             "pct": r["pct"],
             "pe": (r["eva"] or {}).get("pe"),
+            "pb": (r["eva"] or {}).get("pb"),
+            "pb_pct": r.get("pb_pct"),
             "tier": r["tier"]["level"] if r["tier"] else "",
+            "factor": r["tier"]["factor"] if r["tier"] else None,
+            "cap_ratio": r["tier"].get("cap_ratio") if r["tier"] else None,
+            "tier_raw": (r["tier_raw"] or {}).get("level", ""),
+            "tier_note": r.get("tier_note", ""),
             "src": r.get("src", "-"),
             "want": r["want"], "alloc": r["alloc"],
             "done": r.get("done", 0) or 0,

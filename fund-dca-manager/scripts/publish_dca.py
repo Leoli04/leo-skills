@@ -119,15 +119,17 @@ def main():
     info = json.loads(m2.group(1))
     new_id = info.get("node_block_id", "")
 
-    # 4) 回写节点 id
+    # 4) 回写节点 id（必须合并，不能整个替换 library —— 否则 databases 绑定会被抹掉，
+    #    下一轮 sync_lib.py 就找不到跨端数据表了）
     if new_id and new_id != node_id:
-        cfg["library"] = {
-            "space_id": space_id,
-            "folder_id": folder_id,
-            "node_block_id": new_id,
-            "url": info.get("url", ""),
-            "_备注": "首次上传后自动写入；之后发布自动原地覆盖",
-        }
+        libupd = dict(lib)
+        libupd["space_id"] = space_id
+        libupd.setdefault("folder_id", folder_id)
+        libupd["node_block_id"] = new_id
+        if info.get("url"):
+            libupd["url"] = info["url"]
+        libupd.setdefault("_备注", "首次上传后自动写入；之后发布自动原地覆盖")
+        cfg["library"] = libupd
         with io.open(cfg_path, "w", encoding="utf-8") as f:
             json.dump(cfg, f, ensure_ascii=False, indent=2)
         print("已把 node_block_id 写回配置：%s" % new_id)

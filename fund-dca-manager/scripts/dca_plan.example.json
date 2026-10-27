@@ -15,7 +15,8 @@
     "funds[].pool": "该基金在本账户内的资金池上限（只占新增额度，不含历史持仓）",
     "funds[].base_weekly": "中性档周投基准，实际投入 = base_weekly × 档位系数。双周投的按 ÷2 折算成周",
     "funds[].invested / shares": "启用台账前的历史持仓成本 / 已持有份额。invested 之后不要再改",
-    "funds[].platform": "可选，记录用户平台侧的实际设置（定投额/频率/策略），仅供对照，不参与计算"
+    "funds[].platform": "可选，记录用户平台侧的实际设置（定投额/频率/策略），仅供对照，不参与计算",
+    "anchors": "三锚配置。pb_check 是双锚校验（PE 分位定档 + PB 分位 ±1 档校验），默认开启；bond10y 只用于页面展示 ERP，不参与定档；dd_warn_* 只做跌幅陷阱告警"
   },
   "_可用指数代码": {
     "SZ399006": "创业板指",
@@ -97,6 +98,16 @@
       "cap_ratio": 0.2
     }
   ],
+  "anchors": {
+    "pb_check": {
+      "enabled": true,
+      "gap_pct": 20.0
+    },
+    "bond10y": 1.65,
+    "bond10y_asof": "2026-10-21",
+    "dd_warn_dd": -30.0,
+    "dd_warn_pct": 40.0
+  },
   "funds": [
     {
       "code": "001592",

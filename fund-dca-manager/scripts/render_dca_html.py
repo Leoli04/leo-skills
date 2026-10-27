@@ -156,7 +156,10 @@ def tier_table(rules, funds=None):
     """档位对照表。从 tier_rules 生成，改配置即改说明，避免说明与计算脱节。"""
     hits = {}
     for f in funds or []:
-        i = rule_index(f.get("pct"), rules)
+        # 用修正后的档位归组，否则 PB 校验改过档的标的会显示在原始分位那一行
+        lv = f.get("tier")
+        i = (next((k for k, r in enumerate(rules) if r["level"] == lv), None)
+             if lv and lv != "-" else rule_index(f.get("pct"), rules))
         if i is not None:
             hits.setdefault(i, []).append(f.get("short") or f.get("name", ""))
     p = ['<table><thead><tr><th>档</th><th>分位区间</th><th class="num">系数</th>'
@@ -194,7 +197,7 @@ def svg_percentile(funds):
     top = 26
     h = top + n * row_h + 26
     left, bar_w = 150, 390
-    parts = ['<svg viewBox="0 0 660 %d" role="img" aria-label="各基金估值分位标尺">' % h]
+    parts = ['<svg viewBox="0 0 700 %d" role="img" aria-label="各基金估值分位标尺">' % h]
     parts.append('<title>各基金估值历史分位</title>')
     # 背景带按档位分五段（颜色走 CSS 变量，三套主题共用同一份 SVG）
     for a, b, color in [(0, 10, "var(--band1)"), (10, 22, "var(--band2)"), (22, 47, "var(--band3)"),
@@ -219,11 +222,33 @@ def svg_percentile(funds):
             continue
         x = left + bar_w * min(pct, 100) / 100.0
         color = "var(--buy)" if pct <= 22 else ("var(--amber)" if pct <= 47 else "var(--warn)")
+        # PB 分位：空心方点，与 PE 分位差 ≥20pct 时用醒目色提示这一档被交叉修正过
+        pb = f.get("pb_pct")
+        if pb is not None:
+            px = left + bar_w * min(pb, 100) / 100.0
+            off = abs(pb - pct) >= 20
+            pcolor = "var(--ink)" if off else "var(--ink3)"
+            # 两个分位之间画虚线相连：不相连时读者会把 PB 方点误认为相邻基金的标记
+            parts.append('<line x1="%.1f" y1="%d" x2="%.1f" y2="%d" stroke="%s" '
+                         'stroke-width="1" stroke-dasharray="2 3" opacity="0.5"/>'
+                         % (min(x, px), y, max(x, px), y, pcolor))
+            parts.append('<line x1="%.1f" y1="%d" x2="%.1f" y2="%d" stroke="%s" stroke-width="1" '
+                         'stroke-dasharray="2 2"/>' % (px, y - 9, px, y + 9, pcolor))
+            parts.append('<rect x="%.1f" y="%.1f" width="5" height="5" fill="none" stroke="%s" '
+                         'stroke-width="1.3"/>' % (px - 2.5, y - 2.5, pcolor))
         parts.append('<line x1="%.1f" y1="%d" x2="%.1f" y2="%d" stroke="%s" stroke-width="2"/>'
                      % (x, y - 9, x, y + 9, color))
         parts.append('<circle cx="%.1f" cy="%d" r="4" fill="%s"/>' % (x, y, color))
-        parts.append('<text x="%d" y="%d" font-size="11.5" fill="%s" font-weight="600" text-anchor="end">%.1f%%</text>'
-                     % (620, y + 4, color, pct))
+        # PE 与 PB 两个数值必须错开，否则「58.6%」和「PB 58.5%」会叠在一起
+        if pb is not None:
+            parts.append('<text x="%d" y="%d" font-size="11" fill="%s" font-weight="600" '
+                         'text-anchor="end">%.1f%%</text>'
+                         % (600, y + 4, color, pct))
+            parts.append('<text x="%d" y="%d" font-size="10.5" fill="var(--ink3)" '
+                         'text-anchor="end">PB %.1f%%</text>' % (700, y + 4, pb))
+        else:
+            parts.append('<text x="%d" y="%d" font-size="11.5" fill="%s" font-weight="600" '
+                         'text-anchor="end">%.1f%%</text>' % (700, y + 4, color, pct))
     parts.append('</svg>')
     return "".join(parts)
 
@@ -361,7 +386,11 @@ def assess(funds, hold, accounts, rules):
         f = r["f"]
         pct = f["pct"]
         t = tier_of(pct, rules) if pct is not None else None
-        factor = t["factor"] if t else 0
+        # 用快照里的「修正后系数」，否则 02 节会按原始 PE 分位判停投，
+        # 与 01 节 PB 校验后的档位自相矛盾（同一只基金一处说投 50、一处说停投）
+        factor = f.get("factor")
+        if factor is None:
+            factor = t["factor"] if t else 0
         bw = f.get("base_w") or 0
         room = max(0, (f.get("pool") or 0) - (f.get("new") or 0))
         if r["ok"]:
@@ -372,7 +401,7 @@ def assess(funds, hold, accounts, rules):
         elif pct is None:
             r["dg"], r["dgt"] = "mute", "无分位"
             r["advice"] = "没有分位就不该定额，本周 0 元不是判断结论；补该指数的分位后再落档"
-        elif pct > 47:
+        elif factor <= 0:
             if r["weight"] >= 15:
                 r["dg"], r["dgt"] = "bad", "高位重仓"
                 r["advice"] = ("停投已生效。占比最大 + 估值最贵 + 没有新钱摊薄，三条同时成立；"
@@ -380,12 +409,12 @@ def assess(funds, hold, accounts, rules):
             elif r["pnl_pct"] <= -25:
                 r["dg"], r["dgt"] = "bad", "深亏停投"
                 r["advice"] = ("不加钱是对的，在贵的位置摊薄只会放大亏损；回本需涨 %.0f%%，"
-                               "等分位回到 47%% 以下再用 C 档接" % r["need"])
+                               "等分位（或 PB 分位）确认回落后再用 C 档接" % r["need"])
             else:
                 r["dg"], r["dgt"] = "warn", "偏贵持有"
-                r["advice"] = "停投持有，不加仓；分位回落到 47%% 以下自动进 C 档（%.1f×）" % (
+                r["advice"] = "停投持有，不加仓；PE 与 PB 分位同向回落即自动进 C 档（%.1f×）" % (
                     (tier_of(46.99, rules) or {}).get("factor", 0))
-        elif pct <= 22:
+        elif factor >= 1.0:
             if r["weight"] < 5:
                 r["dg"], r["dgt"] = "good", "低估轻仓"
                 r["advice"] = ("钱该来这里：分位 %.1f%% 但只占 %.1f%%，额度还剩 %s；"
@@ -396,7 +425,8 @@ def assess(funds, hold, accounts, rules):
                 r["advice"] = "维持现额；占比已达 %.1f%%，不再提高单一权重" % r["weight"]
         else:
             r["dg"], r["dgt"] = "neutral", "中性档"
-            r["advice"] = "按 %.1f× 常规投 %s 元/周，不加不减" % (factor, money(f["week"]))
+            r["advice"] = "按 %.1f× 常规投 %s 元/周，不加不减" % (
+                factor, money(round(bw * factor)))
 
     live = [r for r in rows if r["ok"]]
     by_w = sorted(live, key=lambda r: -r["weight"])
@@ -412,7 +442,14 @@ def assess(funds, hold, accounts, rules):
         else:
             r["advice"] = ("权重 %.1f%%，与第一位合计 %.1f%%，同样处在停投区、没有新钱摊薄；"
                            "回本需涨 %.0f%%，减不减取决于你是否接受这个集中度" % (r["weight"], top2, r["need"]))
-    stop_mv = sum(r["amount"] for r in live if r["f"]["pct"] is not None and r["f"]["pct"] > 47)
+    def _fac(r):
+        v = r["f"].get("factor")
+        if v is not None:
+            return v
+        t = tier_of(r["f"]["pct"], rules) if r["f"]["pct"] is not None else None
+        return t["factor"] if t else 0
+
+    stop_mv = sum(r["amount"] for r in live if r["f"]["pct"] is not None and _fac(r) <= 0)
     stop_share = stop_mv / total_mv * 100 if total_mv else 0
     # 亏损贡献
     losers = sorted([r for r in live if r["pnl"] < 0], key=lambda r: r["pnl"])
@@ -425,7 +462,7 @@ def assess(funds, hold, accounts, rules):
         idle.append({"id": a["id"], "name": a.get("name", ""), "cap": cap,
                      "used": used, "left": cap - used})
     idle_total = sum(max(0, x["left"]) for x in idle)
-    cheap = [r for r in live if r["f"]["pct"] is not None and r["f"]["pct"] <= 22]
+    cheap = [r for r in live if r["f"]["pct"] is not None and _fac(r) >= 1.0]
     cheap_week = sum(r["f"]["week"] for r in cheap)
     cheap_mv = sum(r["amount"] for r in cheap)
     week_total = sum(f["week"] for f in funds)
@@ -445,7 +482,8 @@ def assess(funds, hold, accounts, rules):
     # ---- 三条结论 ----
     h.append('<div class="cons">')
     if top1:
-        cls = "bad" if (top1["f"]["pct"] is not None and top1["f"]["pct"] > 47) else "warn"
+        cls = "bad" if ((top1["f"].get("factor") if top1["f"].get("factor") is not None
+                         else 1) <= 0) else "warn"
         pct_top = ("%.1f%%" % top1["f"]["pct"]) if top1["f"]["pct"] is not None else "无分位"
         h.append('<div class="%s"><div class="t">最大风险</div>'
                  '<div class="v">%s 占 %.1f%%</div>'
@@ -468,7 +506,7 @@ def assess(funds, hold, accounts, rules):
                     len(cheap), cheap_mv / total_mv * 100 if total_mv else 0, money(cheap_week)))
     h.append('<div class="neutral"><div class="t">结构</div>'
              '<div class="v">停投区占 %.0f%% 市值</div>'
-             '<div class="d">分位 &gt;47%% 的标的合计 %s 元，前二权重 %.1f%%；%d 只为权益类，'
+             '<div class="d">两锚一致判停投的标的合计 %s 元，前二权重 %.1f%%；%d 只为权益类，'
              '债/货币 %d 只。想加仓只能靠分位回落，不是靠加钱。</div></div>'
              % (stop_share, money(stop_mv), top2, eq_n, len(bond)))
     h.append('</div>')
@@ -593,6 +631,9 @@ def build(cfg, ledger, weeks, snap=None, hold=None):
         if s:
             pct = s.get("pct")
             pe = s.get("pe")
+            pb_pct = s.get("pb_pct")
+            tier_raw = s.get("tier_raw") or ""
+            tier_note = s.get("tier_note") or ""
             week_v = (s.get("done", 0) or 0) + (s.get("alloc", 0) or 0)
             tier_lv = s.get("tier") or "-"
             src = s.get("src", "-")
@@ -604,6 +645,8 @@ def build(cfg, ledger, weeks, snap=None, hold=None):
         else:
             pct = rec["percentile"] if rec else None
             pe = rec["pe"] if rec else None
+            pb_pct = None
+            tier_raw, tier_note = "", ""
             week_v = rec["actual"] if rec else 0
             t = tier_of(pct, rules) if pct is not None else None
             tier_lv = t["level"] if t else "-"
@@ -615,6 +658,8 @@ def build(cfg, ledger, weeks, snap=None, hold=None):
             "code": f["code"], "name": f["name"], "short": f["name"][:10],
             "account": f["account"], "index": f.get("index_code", ""),
             "pe": pe, "pct": pct, "tier": tier_lv, "src": src, "proxy": proxy,
+            "pb_pct": pb_pct, "tier_raw": tier_raw, "tier_note": tier_note,
+            "factor": (s or {}).get("factor") if s else None,
             "week": week_v, "cum": cum_v, "pool": f.get("pool", 0) or 1,
             "base_inv": bi, "new": new_v,
             "base_w": f.get("base_weekly", 0),
@@ -642,7 +687,8 @@ def build(cfg, ledger, weeks, snap=None, hold=None):
             alerts.append(("无估值分位", f["name"] + " 未取到对应指数估值",
                            "本周不分配，但不代表不该买。补法：在 dca_plan.json 里给这只加 "
                            "manual_percentile 字段手工填分位值，重跑即恢复档位"))
-        if f["pct"] is not None and f["pct"] > 47:
+        _fac_al = f.get("factor")
+        if f["pct"] is not None and _fac_al is not None and _fac_al <= 0:
             alerts.append(("停投", f["name"] + " 分位 %.1f%%" % f["pct"], "高于停投线，只持有不再买入"))
         if f["new"] / f["pool"] > 0.9:
             alerts.append(("新增额度将尽", f["name"] + " 已用 %.0f%%" % (f["new"] / f["pool"] * 100),
@@ -829,16 +875,25 @@ table,.acc,.cons>div{break-inside:avoid}
                  % (money(used), money(cap - used)))
         if af:
             h.append('<table><thead><tr><th>基金</th><th class="num">PE</th><th class="num">分位</th>'
+                     '<th class="num">PB分位</th>'
                      '<th>档</th><th>数据源</th><th class="num">本周投</th>'
                      '<th class="num">新增/额度</th></tr></thead><tbody>')
             for f in sorted(af, key=lambda x: (x["pct"] if x["pct"] is not None else 999)):
                 src = f.get("src") or "-"
-                h.append('<tr><td>%s</td><td class="num">%s</td><td class="num">%s</td>'
+                pbp = ("%.1f%%" % f["pb_pct"]) if f.get("pb_pct") is not None else "-"
+                raw = f.get("tier_raw") or ""
+                tier_cell = ('%s <span class="src">←%s</span>' % (esc(f["tier"]), esc(raw))
+                             if raw and raw != f["tier"] else esc(f["tier"]))
+                h.append('<tr><td>%s%s</td><td class="num">%s</td><td class="num">%s</td>'
+                         '<td class="num">%s</td>'
                          '<td><span class="tier t-%s">%s</span></td><td class="src">%s</td>'
                          '<td class="num">%s</td><td class="num">%s/%s</td></tr>'
-                         % (esc(f["name"]), "%.2f" % f["pe"] if f["pe"] else "-",
-                            "%.1f%%" % f["pct"] if f["pct"] is not None else "-",
-                            esc(f["tier"]), esc(f["tier"]), esc(src), money(f["week"]),
+                         % (esc(f["name"]),
+                            ('<div class="src">%s</div>' % esc(f["tier_note"]))
+                            if f.get("tier_note") else "",
+                            "%.2f" % f["pe"] if f["pe"] else "-",
+                            "%.1f%%" % f["pct"] if f["pct"] is not None else "-", pbp,
+                            esc(f["tier"]), tier_cell, esc(src), money(f["week"]),
                             money(f["new"]), money(f["pool"])))
             h.append('</tbody></table>')
         else:
@@ -852,8 +907,11 @@ table,.acc,.cons>div{break-inside:avoid}
     if funds:
         h.append('<h2><span class="n">03</span>估值分位位置</h2>')
         h.append('<p class="note">色带与档位一一对应：<b>绿 ≤22%</b> 偏低可加码 · <b>米 22–47%</b> 中性减速 · '
-                 '<b>橙 47–70%</b> 偏贵停投 · <b>红 &gt;70%</b> 高估。分位窗口自 2016-07 起约 10.3 年，'
-                 '不含 2015 年那轮泡沫，所以严格说这是「2016-07 以来分位」而非「历史分位」。</p>')
+                 '<b>橙 47–70%</b> 偏贵停投 · <b>红 &gt;70%</b> 高估。'
+                 '<b>●圆点 = PE 分位</b>（定档依据），<b>□方点 = PB 分位</b>（校验依据）——'
+                 '两者拉开 20 个百分点以上时方点会变深，表示这一档被交叉修正过。'
+                 '分位窗口自 2016-07 起约 10.3 年，不含 2015 年那轮泡沫，'
+                 '所以严格说这是「2016-07 以来分位」而非「历史分位」。</p>')
         h.append('<div class="chartbox">')
         h.append(svg_percentile(funds))
         h.append('</div>')
@@ -865,6 +923,35 @@ table,.acc,.cons>div{break-inside:avoid}
                  '绝对金额并不可比</b>。资金池上限是该档最多能动用本基金池子的比例，分位越低允许动用的越多，'
                  '这是「越跌越有钱买」的机制来源。</p>')
         h.append(tier_table(rules, funds))
+
+        # 双锚校验：说明「为什么不能只看 PE 分位」
+        shifted = [f for f in funds if f.get("tier_raw") and f["tier_raw"] != f["tier"]]
+        h.append('<h3>为什么单看 PE 分位会错，PB 分位怎么校正</h3>')
+        h.append('<p class="note">恒等式 <b>PE = PB ÷ ROE</b>。PE 分位偏高可能只是盈利分母变小（ROE 下滑），'
+                 '不是价格变贵；而 PB 分位不受盈利周期扭曲——净资产是累计量，不会因为一个季度利润波动而重构。'
+                 '所以规则是：<b>PE 分位定档，PB 分位做 ±1 档校验</b>。PB 分位比 PE 分位低 20 个百分点以上，'
+                 '说明「按净资产看并不贵、PE 高是盈利在下滑」，上修 1 档；反过来 PE 低而 PB 高，是盈利虚高，'
+                 '下修 1 档。修正上限 ±1 档，绝不越级跳档。</p>')
+        if shifted:
+            h.append('<table><thead><tr><th>基金</th><th class="num">PE 分位</th>'
+                     '<th class="num">PB 分位</th><th>差</th><th>原档</th><th>修正后</th>'
+                     '<th>依据</th></tr></thead><tbody>')
+            for f in shifted:
+                d = (f["pb_pct"] - f["pct"]) if f.get("pb_pct") is not None else None
+                h.append('<tr><td>%s</td><td class="num">%.1f%%</td><td class="num">%.1f%%</td>'
+                         '<td class="num">%s</td><td><span class="tier t-%s">%s</span></td>'
+                         '<td><span class="tier t-%s">%s</span></td><td class="src">%s</td></tr>'
+                         % (esc(f["name"]), f["pct"], f["pb_pct"],
+                            ("%+.0fpct" % d) if d is not None else "—",
+                            esc(f["tier_raw"]), esc(f["tier_raw"]),
+                            esc(f["tier"]), esc(f["tier"]), esc(f["tier_note"])))
+            h.append('</tbody></table>')
+        else:
+            h.append('<p class="note">本周没有标的需要交叉修正：PE 与 PB 分位指向同一档，'
+                     '或者差额未达 20 个百分点的修正门槛。</p>')
+        h.append('<p class="note">这条规则针对的正是「慢牛中枢重定价」：企业盈利能力变强时，'
+                 '同样的净资产能赚更多钱，PE 会被动走低、PB 分位先动；反过来盈利下滑时 PE 虚高而 PB 正常。'
+                 '只用 PE 分位，会把「盈利下滑但价格没跌」误判成「很贵」，从而长期不给买点。</p>')
         dup_levels = {}
         for r in rules:
             dup_levels.setdefault(r["level"], []).append(r)
@@ -983,6 +1070,8 @@ table,.acc,.cons>div{break-inside:avoid}
     # footer
     h.append('<footer><b>口径</b>　估值分位来自蛋卷（雪球基金）指数估值，窗口自 2016-07 起约 10.3 年，'
              '不含 2015 年泡沫；PE 为 TTM 口径，跨指数不可直接用 PE 绝对值比较，只能比分位。'
+             '<b>双锚校验</b>：PE 分位定档，PB 分位做 ±1 档交叉校验（差额门槛 20 个百分点）——'
+             'PB 分位不受盈利周期扭曲，能分辨「PE 高是盈利下滑」还是「价格真贵」。'
              '台账按 ISO 自然周去重，同一周重复运行只记一次。<br><br>'
              '<b>说明</b>　本页为执行记录，不构成投资建议。累计投入 = 配置中的历史持仓基数 + 台账全部记录之和。'
              'actual 列可在 ledger.csv 中手工修正，下次渲染即生效。<br><br>'
