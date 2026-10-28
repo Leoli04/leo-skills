@@ -491,18 +491,27 @@ def assess(funds, hold, accounts, rules):
         t = tier_of(r["f"]["pct"], rules) if r["f"]["pct"] is not None else None
         return t["factor"] if t else 0
 
+    def _plan_of(f):
+        """该股本档应投 = base_weekly × 挡位系数。无档位记 0（脚本不替用户分配）。"""
+        return round((f.get("base_w") or 0) * _fac({"f": f}))
+
     stop_mv = sum(r["amount"] for r in live if r["f"]["pct"] is not None and _fac(r) <= 0)
     stop_share = stop_mv / total_mv * 100 if total_mv else 0
     # 亏损贡献
     losers = sorted([r for r in live if r["pnl"] < 0], key=lambda r: r["pnl"])
     lose_sum = -sum(r["pnl"] for r in losers) or 1
-    # 账户闲置预算
+    # 账户闲置：分母必须用「本档应投」（base_weekly × 档位系数），不能用 weekly_budget_cap。
+    # cap 是「全部标的都落在中性 B 档」时的满额，只作上限校验；拿它减实投，
+    # 会把「档位把它压到 900」谎报成「预算 1,030 没花完」。
     idle = []
     for a in accounts:
         cap = a.get("weekly_budget_cap") or 0
+        plan = sum(_plan_of(f) for f in funds if f["account"] == a["id"])
         used = sum(f["week"] for f in funds if f["account"] == a["id"])
         idle.append({"id": a["id"], "name": a.get("name", ""), "cap": cap,
-                     "used": used, "left": cap - used})
+                     "plan": plan, "used": used,
+                     "left": max(0, plan - used),
+                     "over": max(0, used - plan)})
     idle_total = sum(max(0, x["left"]) for x in idle)
     cheap = [r for r in live if r["f"]["pct"] is not None and _fac(r) >= 1.0]
     cheap_week = sum(r["f"]["week"] for r in cheap)
@@ -549,12 +558,14 @@ def assess(funds, hold, accounts, rules):
         h.append('<div class="mute"><div class="t">最大风险</div><div class="v">无可用市值</div>'
                  '<div class="d">持仓文件里没有可核算的市值，先补金额与成本价。</div></div>')
     if idle_total > 0:
-        h.append('<div class="warn"><div class="t">钱没花对</div>'
-                 '<div class="v">闲置 %s 元/周</div>'
-                 '<div class="d">%s。同期分位 ≤22%% 的资产只有 %d 只、占 %.1f%% 市值、本周拿到 %s 元。'
-                 '预算闲置不是因为没钱，是因为便宜的不在名单上。</div></div>'
+        h.append('<div class="warn"><div class="t">该投未投</div>'
+                 '<div class="v">%s 元/周</div>'
+                 '<div class="d">%s。同期分位 ≤22%% 的资产 %d 只、占 %.1f%% 市值、本周拿到 %s 元。'
+                 '差额只有两种来源：<b>名单上压根没有便宜资产</b>（该加标的），或'
+                 '<b>名单上有、本周没落地</b>（只是执行）——先分清是哪一种再动手。</div></div>'
                  % (money(idle_total),
-                    "、".join("%s 预算 %s 只用 %s" % (x["name"] or x["id"], money(x["cap"]), money(x["used"]))
+                    "、".join("%s 本档应投 %s、实投 %s"
+                             % (x["name"] or x["id"], money(x["plan"]), money(x["used"]))
                              for x in idle if x["left"] > 0),
                     len(cheap), cheap_mv / total_mv * 100 if total_mv else 0, money(cheap_week)))
     h.append('<div class="neutral"><div class="t">结构</div>'
@@ -602,11 +613,15 @@ def assess(funds, hold, accounts, rules):
     # ---- 两个方案 ----
     cheap_low = sorted([r for r in cheap if r["weight"] < 5], key=lambda r: r["weight"])
     raise_base = cheap_low[0] if cheap_low else None
-    a_raise = raise_base["f"]["week"] if raise_base else 0
-    b_add = 150 if len(idle) > 1 else 0
+    # 加码幅度用「本档应投」而不是「本周实投」：本周没落地时实投是 0，
+    # 拿它做基数会算出「从 700 升到 700」这种空转结论。
+    a_raise = _plan_of(raise_base["f"]) if raise_base else 0
+    # 副账户只有在「按档应投已超过上限」时才有加额空间；够用时加成 0，
+    # 不能因为「存在第二个账户」就凭空加一笔钱（B 本档应投 450 = 上限 450）。
+    b_add = max(0, idle[1]["plan"] - idle[1]["cap"]) if len(idle) > 1 else 0
     new_week = week_total + a_raise + b_add
-    # 两笔增量都落在分位 ≤22% 的标的上（B 的 013125 分位 14.7% 也在其中），
-    # 所以「便宜资产拿到的钱」要把 b_add 一起加进来，否则总数涨了、便宜那栏不动，自相矛盾
+    # 增量落在分位 ≤22% 的标的上，所以「便宜资产拿到的钱」要同步加进来，
+    # 否则总数涨了、便宜那栏不动，自相矛盾
     new_cheap = cheap_week + a_raise + b_add
     h.append('<h3>两个可执行方案</h3>')
     h.append('<p class="note">A 只动新钱，存量不动，随时可停；B 要动存量，需要更高确信。'
@@ -616,13 +631,15 @@ def assess(funds, hold, accounts, rules):
              '<th>方案 A · 只调新钱（先做这个）</th><th>方案 B · 再动存量（条件触发）</th>'
              '</tr></thead><tbody>')
     a_rows = []
-    a_rows.append(("账户预算",
-                   "%s 预算 %s 只用 %s，闲置 %s：要么把 cap 降到实际投入，"
-                   "要么把闲置记为「低估加仓储备」，等分位下移一次性投"
-                   % (idle[0]["name"] or idle[0]["id"], money(idle[0]["cap"]),
-                      money(idle[0]["used"]), money(max(0, idle[0]["left"])))
-                   if idle else "—",
-                   "不动预算，只改配置口径"))
+    if idle:
+        _i = idle[0]
+        a_rows.append(("账户预算",
+                       "本档应投 %s、实投 %s，差 %s 未执行（基准上限 %s 是「全部落在中性 B 档」"
+                       "时的满额，不随估值动，只作上限校验）：差的部分是「该投没投」，"
+                       "不是「预算没花完」——主因是这几只本周没落地，不是档位不让投"
+                       % (money(_i["plan"]), money(_i["used"]), money(_i["left"]),
+                          money(_i["cap"])),
+                       "不动预算，只改配置口径"))
     if raise_base:
         # 只给相对幅度不给绝对金额：绝对值是用户的执行决策
         a_rows.append(("给低估的抬定投额",
@@ -631,15 +648,15 @@ def assess(funds, hold, accounts, rules):
                        % (raise_base["f"]["name"][:10], raise_base["f"]["pct"],
                           raise_base["weight"], raise_base["f"]["tier"]),
                        "不涉及"))
-    if len(idle) > 1:
+    if len(idle) > 1 and idle[1]["plan"] > idle[1]["cap"]:
+        # 只有「按档应投 > 基准上限」才是真的预算不够；只按账户个数判断会凭空造出
+        # 「预算不够」的结论（B 账户本档应投 450 = 上限 450，够用）。
         b_acct = idle[1]
+        _short = b_acct["plan"] - b_acct["cap"]
         a_rows.append(("%s 预算不够" % (b_acct["name"] or b_acct["id"]),
-                       "预算 %s 全给分位最低那只（S 档要 %s），其余 B 档被挤成 0：cap 提到 %s 才能让 B 档落地"
-                       % (money(b_acct["cap"]),
-                          money(sum((f.get("base_w") or 0) * 4 for f in funds
-                                    if f["account"] == b_acct["id"] and f["pct"] is not None
-                                    and f["pct"] <= 3) or 0),
-                          money(b_acct["cap"] + 150)),
+                       "本档应投 %s 已超过上限 %s，缺口 %s；上限提到 %s 才能让档位全部落地"
+                       % (money(b_acct["plan"]), money(b_acct["cap"]), money(_short),
+                          money(b_acct["plan"])),
                        "不涉及"))
     if top1:
         cut = top1["amount"] / 3
@@ -659,7 +676,9 @@ def assess(funds, hold, accounts, rules):
                  % (esc(item), esc(a_txt), esc(b_txt)))
     h.append('</tbody></table>')
     h.append('<p class="note">方案 A 落地后周投从 %s 元升到约 %s 元，其中分位 ≤22%% 的部分从 %s 元升到约 %s 元——'
-             '加的是便宜资产，不是把预算摊平。这不是收益预测，只是把「钱去哪」算清楚。</p>'
+             '加的是便宜资产，不是把预算摊平。这不是收益预测，只是把「钱去哪」算清楚。'
+             '<b>注意它填不平「该投未投」的全部缺口</b>：加码只解决其中一只，'
+             '剩下的缺口要靠<b>把名单上该投的几只真的投出去</b>，与加不加钱无关。</p>'
              % (money(week_total), money(new_week), money(cheap_week), money(new_cheap)))
     return h
 
@@ -768,13 +787,26 @@ def build(cfg, ledger, weeks, snap=None, hold=None):
         weekv = sum(f["week"] for f in sel)
         mvv = sum((hhold(hold, f).get("amount") or 0) for f in sel)
         ps = [f["pct"] for f in sel if f["pct"] is not None]
+        # 按档位折算的应投 = Σ base_weekly × 档位系数。
+        # 与 bud（weekly_budget_cap）是两个不同的东西：bud 是「全部标的都落在中性 B 档」
+        # 时的满额上限，不随估值变；plan 才随档位升降，是本周真正该投的钱。
+        # 两者混用会把「本档只该投 900」读成「预算 1,030 没花完」。
+        planv = 0
+        for f in sel:
+            fac = f.get("factor")
+            if fac is None:
+                t = tier_of(f["pct"], rules) if f["pct"] is not None else None
+                fac = t["factor"] if t else 0
+            planv += round((f.get("base_w") or 0) * fac)
         return {
             "id": acc_id or "total", "n": len(sel), "n_pct": len(ps),
             "week": weekv, "cum": cumv, "new": newv, "base": basev,
-            "mv": mvv, "pnl": mvv - cumv, "cap": cap, "bud": bud,
+            "mv": mvv, "pnl": mvv - cumv, "cap": cap, "bud": bud, "plan": planv,
             "avg": (sum(ps) / len(ps)) if ps else None,
             "use": (cumv / cap * 100) if cap else 0.0,
-            "bud_use": (weekv / bud * 100) if bud else 0.0,
+            # 执行率的分母必须是「本档应投」，不是基准上限
+            "bud_use": (weekv / planv * 100) if planv else 0.0,
+            "idle": max(0, planv - weekv),
         }
 
     agg_all = _agg(None)
@@ -1022,7 +1054,8 @@ table,.acc,.cons>div{break-inside:avoid}
                            if agg_map[a["id"]]["avg"] is not None else "—")
                 for a in accounts))
         else:
-            d["h_week"] = "周预算 %s，本周执行 %.0f%%" % (money(g["bud"]), g["bud_use"])
+            d["h_week"] = ("基准 %s → 本档应投 %s，实投执行 %.0f%%"
+                           % (money(g["bud"]), money(g["plan"]), g["bud_use"]))
             d["h_cum"] = "历史 %s + 台账 %s" % (wan(g["base"]), wan(g["new"]))
             d["h_mv"] = "资金池 %s，已用 %.1f%%" % (wan(g["cap"]), g["use"])
             d["h_avg"] = "%d 只有分位" % g["n_pct"]
@@ -1063,45 +1096,66 @@ table,.acc,.cons>div{break-inside:avoid}
 
     # 账户对照：切换卡片只是省空间，这张表才是全量。即便禁用 JS 也能读到两个账户。
     h.append('<div class="tw"><table><thead><tr><th>账户</th>'
-             '<th class="num">本周投入</th><th class="num">周预算</th>'
+             '<th class="num">本周投入</th><th class="num">基准 → 应投</th>'
              '<th class="num">累计投入</th><th class="num">资金池</th><th class="num">已用</th>'
              '<th class="num">当前市值</th><th class="num">浮动盈亏</th>'
              '<th class="num">平均分位</th></tr></thead><tbody>')
     for a in accounts:
         g = agg_map[a["id"]]
         pc = "var(--warn)" if g["pnl"] >= 0 else "var(--buy)"
+        # 基准 = 全部落到中性 B 档时的满额；应投 = 按当周档位折算后的金额。
+        # 两者并列，避免把「档位把它压到 900」读成「1,030 的预算没花完」。
         h.append('<tr><td>%s %s<span class="cd">%d 只</span></td>'
-                 '<td class="num">%s</td><td class="num">%s</td>'
+                 '<td class="num">%s</td>'
+                 '<td class="num">%s<span class="cd">→ %s</span></td>'
                  '<td class="num">%s</td><td class="num">%s</td><td class="num">%.1f%%</td>'
                  '<td class="num">%s</td>'
                  '<td class="num"><span style="color:%s">%s（%+.1f%%）</span></td>'
                  '<td class="num">%s</td></tr>'
                  % (esc(a.get("name", "")), esc(a["id"]), g["n"],
-                    money(g["week"]), money(g["bud"]), money(g["cum"]),
+                    money(g["week"]), money(g["bud"]), money(g["plan"]), money(g["cum"]),
                     money(g["cap"]), g["use"], money(g["mv"]),
                     pc, money(g["pnl"]),
                     (g["pnl"] / g["cum"] * 100) if g["cum"] else 0,
                     ("%.1f%%" % g["avg"]) if g["avg"] is not None else "—"))
     _pc = "var(--warn)" if agg_all["pnl"] >= 0 else "var(--buy)"
     h.append('<tr class="sum"><td>合计<span class="cd">%d 只</span></td>'
-             '<td class="num">%s</td><td class="num">%s</td>'
+             '<td class="num">%s</td>'
+             '<td class="num">%s<span class="cd">→ %s</span></td>'
              '<td class="num">%s</td><td class="num">%s</td><td class="num">%.1f%%</td>'
              '<td class="num">%s</td>'
              '<td class="num"><span style="color:%s">%s（%+.1f%%）</span></td>'
              '<td class="num">%s</td></tr>'
-             % (agg_all["n"], money(agg_all["week"]), money(agg_all["bud"]),
+             % (agg_all["n"], money(agg_all["week"]),
+                money(agg_all["bud"]), money(agg_all["plan"]),
                 money(agg_all["cum"]), money(agg_all["cap"]), agg_all["use"],
                 money(agg_all["mv"]), _pc, money(agg_all["pnl"]),
                 (agg_all["pnl"] / agg_all["cum"] * 100) if agg_all["cum"] else 0,
                 ("%.1f%%" % agg_all["avg"]) if agg_all["avg"] is not None else "—"))
     h.append('</tbody></table></div>')
-    h.append('<p class="note"><b>两本账不合并</b>：主账户与副账户的资金池、周预算各自独立，'
+    _a0 = agg_map[accounts[0]["id"]] if accounts else agg_all
+    # 基准可复算：把 base_weekly 逐只列出来，否则「1,030 从哪来」只能靠问
+    _bw = sorted([(f.get("base_w") or 0) for f in funds
+                  if f["account"] == accounts[0]["id"]], reverse=True) if accounts else []
+    h.append('<p class="note"><b>「基准 → 应投」是两个不同的数</b>：基准 = <code>weekly_budget_cap</code>，'
+             '即<b>每只都刚好落在中性 B 档</b>时的满额，写死在配置里、不随估值动，只作上限校验；'
+             '应投 = Σ <code>base_weekly × 档位系数</code>，档位一变它就变'
+             '（D/E 档系数 0 直接归零，A+ 档可到 2–3 倍）。'
+             '基准的构成可复算：<b>%s %s 只 base_weekly 相加 = %s</b>（%s）。<br>'
+             '所以「基准 %s、实投 %s」不等于「还有 %s 没花」——'
+             '真正该比的是<b>应投 %s</b> 与实投 %s，差额 <b>%s</b> 才是「该投没投」。<br>'
+             '<b>两本账不合并</b>：主账户与副账户的资金池、周预算各自独立，'
              '所以「合计」只用于看总资产，<b>任何一档投入都不许跨账户挪用</b>。'
              '「浮动盈亏」= 当前市值 − 累计投入（现金投入口径，含启用台账前的历史持仓）；'
              '第 02 节的浮亏按「市值 ÷ 净值 × 成本价」算持仓成本，'
              '有分红再投的 LOF（160222）两处会差几百元，属正常，不是算错。'
              '「平均分位」只平均<b>当周有分位</b>的基金：主账户 9 只里 4 只无分位，'
-             '副账户 3 只全有，所以两边的平均值不是同一批标的的均值。</p>')
+             '副账户 3 只全有，所以两边的平均值不是同一批标的的均值。</p>'
+             % (esc((accounts[0].get("name") if accounts else "") or ""), len(_bw),
+                money(sum(_bw)),
+                " + ".join(("%d" % x) for x in _bw) if _bw else "—",
+                money(_a0["bud"]), money(_a0["week"]), money(_a0["bud"] - _a0["week"]),
+                money(_a0["plan"]), money(_a0["week"]), money(_a0["idle"])))
 
     # 01 今日档位评估（只给档位：金额属于执行决策，脚本不替用户拍）
     h.append('<h2><span class="n">01</span>今日档位评估</h2>')
