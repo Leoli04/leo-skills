@@ -841,9 +841,14 @@ table,.acc,.cons>div{break-inside:avoid}
     # header
     h.append('<header><div class="kicker">定投执行台账 · DCA Ledger</div>')
     h.append('<h1 class="serif">多账户基金定投 · 执行记录</h1>')
-    h.append('<p class="sub">每周按估值分位落档，账户内按分位优先分配预算；每只设资金池天花板防止低位超配</p>')
-    h.append('<div class="meta"><span>记录日 %s</span><span>数据日 %s</span><span>账户 %d · 基金 %d</span></div>'
-             % (esc(last_date), esc(week_rows[0]["data_date"] if week_rows else "-"),
+    h.append('<p class="sub">PE 分位定档、PB 分位做 ±1 档校验；账户内按分位优先分配预算，'
+             '每只设资金池天花板防止低位超配</p>')
+    # 三个日期必须分开写：记录日是本周已执行的那天，数据日是估值快照日，
+    # 出具日是这一版页面的生成日——规则改动当天重渲染时前两者不变、只有它变
+    h.append('<div class="meta"><span>出具日 %s</span><span>记录日 %s</span><span>数据日 %s</span>'
+             '<span>账户 %d · 基金 %d</span></div>'
+             % (time.strftime("%Y-%m-%d"), esc(last_date),
+                esc(week_rows[0]["data_date"] if week_rows else "-"),
                 len(accounts), len(funds)))
     h.append('</header>')
 
@@ -935,17 +940,27 @@ table,.acc,.cons>div{break-inside:avoid}
         if shifted:
             h.append('<table><thead><tr><th>基金</th><th class="num">PE 分位</th>'
                      '<th class="num">PB 分位</th><th>差</th><th>原档</th><th>修正后</th>'
-                     '<th>依据</th></tr></thead><tbody>')
+                     '<th class="num">周投额变化</th><th>依据</th></tr></thead><tbody>')
             for f in shifted:
                 d = (f["pb_pct"] - f["pct"]) if f.get("pb_pct") is not None else None
+                raw_fac = next((r["factor"] for r in rules
+                                if r["level"] == f["tier_raw"]), 0)
+                bw = f.get("base_w") or 0
                 h.append('<tr><td>%s</td><td class="num">%.1f%%</td><td class="num">%.1f%%</td>'
                          '<td class="num">%s</td><td><span class="tier t-%s">%s</span></td>'
-                         '<td><span class="tier t-%s">%s</span></td><td class="src">%s</td></tr>'
+                         '<td><span class="tier t-%s">%s</span></td>'
+                         '<td class="num">%s → <b>%s</b></td><td class="src">%s</td></tr>'
                          % (esc(f["name"]), f["pct"], f["pb_pct"],
                             ("%+.0fpct" % d) if d is not None else "—",
                             esc(f["tier_raw"]), esc(f["tier_raw"]),
-                            esc(f["tier"]), esc(f["tier"]), esc(f["tier_note"])))
+                            esc(f["tier"]), esc(f["tier"]),
+                            money(round(bw * raw_fac)),
+                            money(round(bw * (f.get("factor") or 0))),
+                            esc(f["tier_note"])))
             h.append('</tbody></table>')
+            h.append('<p class="note">上面三只是<b>同一指数</b>（沪深300）的三只不同基金，'
+                     '所以修正金额按各自 base_weekly 等比放大——不是重复计算。'
+                     '本周金额已按旧规则执行，不追溯；修正从下一个 ISO 周生效。</p>')
         else:
             h.append('<p class="note">本周没有标的需要交叉修正：PE 与 PB 分位指向同一档，'
                      '或者差额未达 20 个百分点的修正门槛。</p>')
@@ -958,7 +973,9 @@ table,.acc,.cons>div{break-inside:avoid}
         split = [lv for lv, rs in dup_levels.items() if len(rs) > 1]
         note = ['<b>- 徽标</b>表示这只没有取到分位数据，本周不分配——是「不知道」，不是「不该买」，'
                 '补法见下方代理说明与告警节。',
-                '<b>停投 ≠ 清仓</b>：D/E 档只是停止买入，已有持仓继续持有，卖出走单独的止盈规则。']
+                '<b>停投 ≠ 清仓</b>：D/E 档只是停止买入，已有持仓继续持有，卖出走单独的止盈规则。',
+                '<b>C←D 这样的写法</b>表示这一档被 PB 分位交叉修正过：箭头右边是 PE 分位原本的档位，'
+                '左边是校验后实际执行的档位。没有箭头就是两锚一致。']
         if split:
             note.append('<b>%s 分了两段</b>：同一徽标下系数不同，所以两只都显示 %s 的基金，'
                         '周投额可以差一倍以上，要看分位具体落在哪一段。'

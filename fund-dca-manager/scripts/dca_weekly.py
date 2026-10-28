@@ -297,6 +297,7 @@ def main():
 
         base_w = fund.get("base_weekly", 0)
         want = round(base_w * tier["factor"]) if tier else 0
+        want_raw = round(base_w * tier_raw["factor"]) if tier_raw else want
 
         pool = fund.get("pool", 0)
         ceiling = round(pool * tier["cap_ratio"]) if tier else 0
@@ -311,7 +312,7 @@ def main():
         rows.append({
             "fund": fund, "eva": eva, "pct": pct, "tier": tier, "src": src,
             "pb_pct": pb_pct, "tier_raw": tier_raw, "tier_note": tier_note,
-            "want": want, "ceiling": ceiling, "invested": invested,
+            "want": want, "want_raw": want_raw, "ceiling": ceiling, "invested": invested,
             "new_sum": new_sum, "cum_total": invested, "room": room,
             "need": need, "alloc": 0,
             "account": fund["account"],
@@ -418,6 +419,17 @@ def main():
     o()
     o("=" * 94)
     o(pad("本周全部账户合计投入", 24) + pad(round(grand), 8, "right") + " 元")
+    shifted = [r for r in rows if r.get("tier_note")]
+    if shifted:
+        o()
+        o("双锚校验修正 %d 只（合计每周 %+d 元）：" % (
+            len(shifted), sum(r["want"] - r["want_raw"] for r in shifted)))
+        for r in shifted:
+            o("   %s  %s档 %d 元 → %s档 %d 元　%s" % (
+                pad(r["fund"]["name"][:14], 30), r["tier_raw"]["level"], r["want_raw"],
+                r["tier"]["level"], r["want"], r["tier_note"]))
+        o("   本周已执行的金额不追溯，从下一个 ISO 周起按修正后档位计算。")
+
     budget_all = sum((acc.get("weekly_budget_cap") or 0) for acc in accounts)
     if budget_all:
         o(pad("账户周预算合计", 24) + pad(round(budget_all), 8, "right") + " 元"
