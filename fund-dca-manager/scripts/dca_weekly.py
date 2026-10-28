@@ -42,6 +42,45 @@ LEDGER_FIELDS = ["iso_week", "run_date", "data_date", "account", "fund_code",
                  "plan", "actual", "cumulative"]
 
 
+def rank_of(level, rules):
+    """档位在规则里的序号，越小越便宜。同名字的 A+ 两格只算第一次出现。"""
+    for i, r in enumerate(rules):
+        if r["level"] == level:
+            return i
+    return len(rules)
+
+
+def load_prev_tiers(out_dir, run_date, week, cfg_funds=None):
+    """上一份「不同 ISO 周」的分位快照 -> ({code: level}, 快照日期)。
+
+    同周快照不能当基线：同周重跑通常是改了规则，档位变化来自规则而不是市场，
+    把它当「档位变了」会误导。
+    """
+    import glob
+    import re
+    best = None
+    for p in glob.glob(os.path.join(out_dir, "snapshot_*.json")):
+        m = re.search(r"snapshot_(\d{4}-\d{2}-\d{2})\.json$", p)
+        if not m:
+            continue
+        d = m.group(1)
+        if d >= run_date:
+            continue
+        try:
+            with open(p, "r", encoding="utf-8") as fp:
+                snap = json.load(fp)
+        except Exception:
+            continue
+        if snap.get("week") == week:
+            continue
+        if best is None or d > best[0]:
+            best = (d, snap)
+    if not best:
+        return {}, None
+    d, snap = best
+    return {f["code"]: (f.get("tier") or "") for f in snap.get("funds", [])}, d
+
+
 def week_key(d=None):
     """ISO 周标识，如 2026-W44。同一周内多次运行只记一次。"""
     d = d or datetime.date.today()
@@ -243,6 +282,8 @@ def main():
         cfg_path = args[args.index("--config") + 1]
     offline = "--offline" in args
     no_save = "--no-save" in args
+    # 默认只输出档位：给到具体金额等于替用户做执行决策，而档位是可复核的估值事实
+    show_amounts = "--amounts" in args
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     if not os.path.isabs(cfg_path):
@@ -264,6 +305,7 @@ def main():
     anc = cfg.get("anchors") or {}
     pbc = anc.get("pb_check") or {}
     gap_pct = float(pbc.get("gap_pct", 20.0))
+    prev_tiers, prev_date = load_prev_tiers(out_dir, time.strftime("%Y-%m-%d"), wk)
     for fund in cfg["funds"]:
         ic = fund.get("index_code") or ""
         if ic and ic not in eva_cache:
@@ -315,8 +357,24 @@ def main():
             room = None
             need = want
 
+        # 与上一份不同周的记录比档位（首份记录 = 基线，不假装「持平」）
+        lv_now = tier["level"] if tier else ""
+        lv_prev = prev_tiers.get(fund["code"])
+        if not prev_tiers:
+            change, change_dir = "基线", 0
+        elif lv_prev is None:
+            change, change_dir = "新入", 0
+        elif lv_prev == lv_now:
+            change, change_dir = "持平", 0
+        else:
+            d = rank_of(lv_now, rules) - rank_of(lv_prev, rules)
+            # 序号变小 = 档位变便宜（S 在最前），用 ↑ 表示可以加码；变大 = 收紧
+            change = "%s→%s%s" % (lv_prev, lv_now, "↑" if d < 0 else "↓")
+            change_dir = -1 if d < 0 else 1
+
         rows.append({
             "fund": fund, "eva": eva, "pct": pct, "tier": tier, "src": src,
+            "change": change, "change_dir": change_dir,
             "pb_pct": pb_pct, "tier_raw": tier_raw, "tier_note": tier_note,
             "want": want, "want_raw": want_raw, "ceiling": ceiling, "invested": invested,
             "new_sum": new_sum, "cum_total": invested, "room": room,
@@ -359,15 +417,20 @@ def main():
 
     o()
     o("=" * 94)
-    o("多账户定投周度执行表   数据日 %s   运行日 %s   账户 %d / 基金 %d"
+    o("基金档位评估表   数据日 %s   运行日 %s   账户 %d / 基金 %d"
       % (asof, run_date, len(accounts), len(rows)))
+    o("只给档位，不给金额：投哪只、投多少由你自己决定；档位发生变化会单独列出。")
     o("=" * 94)
 
-    head = (pad("序", 3) + pad("基金", 20) + pad("指数", 11) +
-            pad("PE", 8, "right") + pad("分位", 7, "right") + pad("PB分位", 7, "right") +
-            pad("档", 6, "center") + pad("源", 5, "center") +
-            pad("理论", 6, "right") + pad("本周投", 7, "right") +
-            pad("新增累计", 12, "right"))
+    if show_amounts:
+        head = (pad("序", 3) + pad("基金", 19) + pad("指数", 11) +
+                pad("PE", 7, "right") + pad("PE分位", 8, "right") + pad("PB分位", 8, "right") +
+                pad("档", 6, "center") + pad("较上次", 9, "center") +
+                pad("理论", 6, "right") + pad("建议", 6, "right"))
+    else:
+        head = (pad("序", 3) + pad("基金", 21) + pad("指数", 12) +
+                pad("PE", 7, "right") + pad("PE分位", 8, "right") + pad("PB分位", 8, "right") +
+                pad("档", 6, "center") + pad("较上次", 9, "center") + pad("备注", 8))
 
     grand = 0
     for acc in accounts:
@@ -375,8 +438,6 @@ def main():
             [r for r in rows if r["account"] == acc["id"]],
             key=lambda r: (r["pct"] if r["pct"] is not None else 999),
         )
-        base_b = acc.get("weekly_budget_base") or 0
-        cap_b = acc.get("weekly_budget_cap") or 0
         used_new = sum(r["alloc"] for r in mine)
         used_done = sum(r.get("done", 0) for r in mine)
         used = used_new + used_done
@@ -384,13 +445,26 @@ def main():
 
         o()
         o("─" * 94)
-        # 不再显示「资金池」：用户给的金额是当前市值，没有设过单只限额
-        _npool = sum(1 for r in mine if r["fund"].get("pool"))
-        o("【%s】%s   周预算 %d（上限 %d）· %s   本周已用 %d，结余 %d%s"
-          % (acc["id"], acc.get("name", ""), base_b, cap_b,
-             ("单只限额 %d 只" % _npool) if _npool else "单只不设限额",
-             used, cap_b - used,
-             "（含上周已执行 %d，本次新增 %d）" % (used_done, used_new) if used_done else ""))
+        if show_amounts:
+            base_b = acc.get("weekly_budget_base") or 0
+            cap_b = acc.get("weekly_budget_cap") or 0
+            o("【%s】%s   周预算 %d（上限 %d）   本周已用 %d，结余 %d%s"
+              % (acc["id"], acc.get("name", ""), base_b, cap_b, used, cap_b - used,
+                 "（含已执行 %d，本次新增 %d）" % (used_done, used_new) if used_done else ""))
+        else:
+            # 只给档位时，账户层面唯一有信息量的汇总是档位分布
+            dist = {}
+            for r in mine:
+                k = r["tier"]["level"] if r["tier"] else "?"
+                dist[k] = dist.get(k, 0) + 1
+            order = []
+            for rr in rules:
+                if rr["level"] not in order:
+                    order.append(rr["level"])
+            order.append("?")
+            o("【%s】%s   档位分布  %s"
+              % (acc["id"], acc.get("name", ""),
+                 " · ".join("%s %d" % (k, dist[k]) for k in order if k in dist)))
         o("─" * 94)
         if not mine:
             o("  （该账户暂无基金，请在配置的 funds 里加 \"account\": \"%s\"）" % acc["id"])
@@ -406,50 +480,64 @@ def main():
             lv = t["level"] if t else "?"
             if r.get("tier_raw") and t and r["tier_raw"]["level"] != t["level"]:
                 lv = "%s←%s" % (t["level"], r["tier_raw"]["level"])
-            mark = ""
-            if r.get("done"):
-                mark = "  ← 本周已执行 %d，本次不重复" % r["done"]
-            elif r.get("frozen") and r["need"] > 0:
-                mark = "  ← 本周账户计划已冻结（本应 %d）" % r["need"]
-            elif r["need"] > 0 and r["alloc"] < r["need"]:
-                mark = "  ← 预算不足，本应 %d" % r["need"]
-            elif r.get("ceiling") is not None and r["want"] > 0 and r["need"] < r["want"]:
-                mark = "  ← 已达该档天花板 %d" % r["ceiling"]
+            chg = r.get("change", "")
+            note = "重开" if f.get("reopen") else ""
             if r.get("tier_note"):
-                mark += "  ⚑ " + r["tier_note"]
-            o(pad(i, 3) + pad(f["name"][:9], 21) + pad(idx_name[:5], 11) +
-              pad(pe, 8, "right") + pad(pct, 7, "right") + pad(pbp, 7, "right") +
-              pad(lv, 6, "center") +
-              pad(r.get("src", "-"), 5, "center") +
-              pad(r["want"], 6, "right") + pad(r["alloc"], 7, "right") +
-              pad(("%d" % round(r["new_sum"] + r["alloc"])) if r.get("ceiling") is None
-                  else ("%d/%d" % (round(r["new_sum"] + r["alloc"]), f.get("pool", 0))),
-                  12, "right") + mark)
+                note = (note + " ⚑") if note else "⚑"
+            if show_amounts:
+                o(pad(i, 3) + pad(f["name"][:9], 19) + pad(idx_name[:6], 12) +
+                  pad(pe, 7, "right") + pad(pct, 8, "right") + pad(pbp, 8, "right") +
+                  pad(lv, 6, "center") + pad(chg, 9, "center") +
+                  pad(r["want"], 6, "right") + pad(r["alloc"], 6, "right"))
+            else:
+                o(pad(i, 3) + pad(f["name"][:10], 21) + pad(idx_name[:6], 12) +
+                  pad(pe, 7, "right") + pad(pct, 8, "right") + pad(pbp, 8, "right") +
+                  pad(lv, 6, "center") + pad(chg, 9, "center") + pad(note, 8))
 
+    # 档位变化：用户明确要求「档位变了要给出」，所以单独成段而不是藏在表格里
+    moved = [r for r in rows if r.get("change_dir")]
     o()
     o("=" * 94)
-    o(pad("本周全部账户合计投入", 24) + pad(round(grand), 8, "right") + " 元")
+    if prev_tiers:
+        o("档位变化（对比 %s 那份记录）：" % prev_date)
+        if not moved:
+            o("  无变化。全部 %d 只维持原档位。" % len(rows))
+        for r in moved:
+            f = r["fund"]
+            o("  %s %s   %s 档位 %s%s"
+              % ("↑" if r["change_dir"] < 0 else "↓",
+                 pad(f["name"][:14], 28),
+                 ("PE分位 %.1f%% / PB分位 %.1f%%" % (r["pct"], r["pb_pct"]))
+                 if r.get("pb_pct") is not None
+                 else ("PE分位 %.1f%%" % r["pct"] if r["pct"] is not None else "无分位"),
+                 r.get("change", ""),
+                 "　（%s）" % r["tier_note"] if r.get("tier_note") else ""))
+        if moved:
+            o("   ↑ = 档位变便宜（可加码）　↓ = 档位变贵（收紧）")
+    else:
+        o("档位变化：本次为该口径下的第一份记录，从下次起显示与上一周的档位对比。")
+    o("=" * 94)
+
     shifted = [r for r in rows if r.get("tier_note")]
     if shifted:
         o()
-        o("双锚校验修正 %d 只（合计每周 %+d 元）：" % (
-            len(shifted), sum(r["want"] - r["want_raw"] for r in shifted)))
+        o("双锚校验修正 %d 只（档位层面，不折算金额）：" % len(shifted))
         for r in shifted:
-            o("   %s  %s档 %d 元 → %s档 %d 元　%s" % (
-                pad(r["fund"]["name"][:14], 30), r["tier_raw"]["level"], r["want_raw"],
-                r["tier"]["level"], r["want"], r["tier_note"]))
-        o("   本周已执行的金额不追溯，从下一个 ISO 周起按修正后档位计算。")
+            o("   %s  %s 档 → %s 档　%s" % (
+                pad(r["fund"]["name"][:14], 28),
+                r["tier_raw"]["level"], r["tier"]["level"], r["tier_note"]))
+        o("   标记 ⚑ 的行即被 PB 分位交叉修正过的标的。")
 
-    budget_all = sum((acc.get("weekly_budget_cap") or 0) for acc in accounts)
-    if budget_all:
+    if show_amounts:
+        budget_all = sum((acc.get("weekly_budget_cap") or 0) for acc in accounts)
+        o()
         o(pad("账户周预算合计", 24) + pad(round(budget_all), 8, "right") + " 元"
           + "      使用率 %.0f%%   未动用 %d 元"
-          % (grand * 100.0 / budget_all, round(budget_all - grand)))
-        if grand < budget_all:
-            o("   未动用的部分不是浪费：分位不支持买入时留着，等分位下来才有子弹。")
-    o("=" * 94)
+          % (grand * 100.0 / budget_all if budget_all else 0,
+             round(budget_all - grand)))
 
     # 档位图例（从 tier_rules 生成，避免说明与计算脱节）
+    o()
     lo = None
     parts = []
     for r in rules:
@@ -463,10 +551,12 @@ def main():
         fac = "停投" if r["factor"] <= 0 else "%.1f×" % r["factor"]
         parts.append("%s %s→%s" % (r["level"], rng, fac))
         lo = hi
-    o("档位图例（分位→系数，周投额=base_weekly×系数）：")
+    o("档位图例（分位→档位；系数只在 --amounts 模式下折算金额）：")
     for i in range(0, len(parts), 4):
         o("   " + "   ".join(parts[i:i + 4]))
-    o("   「?」= 无分位数据，本周不分配，不等于不该买；D/E 档停投但不清仓。")
+    o("   「?」= 无分位数据，不代表不该买，只是无法用分位定档。")
+    o("   「重开」= 该只此前已清仓、近期重新开仓，成本基准从重开日算起。")
+    o("   只给档位、不给金额：投多少、投不投由你自己决定；档位变化会单独列出。")
     if pbc.get("enabled", True):
         o("   双锚校验：PB 分位比 PE 分位低 %.0fpct 以上 → 上修 1 档（PE 高是盈利下滑，"
           "不是价格贵）；高 %.0fpct 以上 → 下修 1 档（盈利虚高）。上限 ±1 档。"
@@ -532,15 +622,14 @@ def main():
         f.write("> 数据日 %s · 配置 %s\n\n```\n" % (asof, os.path.basename(cfg_path)))
         f.write(o.text())
         f.write("\n```\n\n")
-        f.write("## 本周执行\n\n")
-        for acc in accounts:
-            mine = [r for r in rows if r["account"] == acc["id"] and r["alloc"] > 0]
-            if mine:
-                f.write("- **%s**：%s\n" % (
-                    acc.get("name", acc["id"]),
-                    "、".join("%s %d 元" % (r["fund"]["name"], r["alloc"]) for r in mine)))
-            else:
-                f.write("- **%s**：本周无操作\n" % acc.get("name", acc["id"]))
+        f.write("## 档位变化\n\n")
+        if moved:
+            for r in moved:
+                f.write("- **%s**：%s（%s）\n" % (
+                    r["fund"]["name"], r.get("change", ""),
+                    r["tier_note"] or "分位变化"))
+        else:
+            f.write("- 本次无档位变化\n")
 
     added = append_ledger(ledger_path, rows, run_date, asof, wk)
 
@@ -550,6 +639,7 @@ def main():
         "run_date": run_date,
         "data_date": asof,
         "week": wk,
+        "prev_date": prev_date,
         "accounts": [{"id": a["id"], "name": a.get("name", ""),
                       "total_capital": a.get("total_capital", 0),
                       "weekly_budget_base": a.get("weekly_budget_base", 0),
@@ -570,6 +660,9 @@ def main():
             "cap_ratio": r["tier"].get("cap_ratio") if r["tier"] else None,
             "tier_raw": (r["tier_raw"] or {}).get("level", ""),
             "tier_note": r.get("tier_note", ""),
+            "change": r.get("change", ""),
+            "change_dir": r.get("change_dir", 0),
+            "reopen": r["fund"].get("reopen"),
             "src": r.get("src", "-"),
             "want": r["want"], "alloc": r["alloc"],
             "done": r.get("done", 0) or 0,
