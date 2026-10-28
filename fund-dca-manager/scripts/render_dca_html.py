@@ -616,10 +616,13 @@ def build(cfg, ledger, weeks, snap=None, hold=None):
     latest = {}
     for r in ledger:
         latest[(r["account"], r["fund_code"])] = r
-    # 每只基金的累计
+    # 每只基金的累计：按 actual 逐条累加，**不读 cumulative 列**
+    # cumulative 是历史快照，写入时的 invested 基数可能已被后来的基金拆分改动
+    #（例：013125 拆出独立的 160222 后，旧 cumulative 仍含那笔 34,190，直接读会重复计入）
     cum = {}
     for r in ledger:
-        cum[(r["account"], r["fund_code"])] = r["cumulative"]
+        k = (r["account"], r["fund_code"])
+        cum[k] = cum.get(k, 0) + (r.get("actual") or 0)
     base_inv = {}
     for f in cfg["funds"]:
         base_inv[(f["account"], f["code"])] = f.get("invested", 0)
@@ -663,7 +666,7 @@ def build(cfg, ledger, weeks, snap=None, hold=None):
             tier_lv = t["level"] if t else "-"
             src = "-"
             proxy = f.get("index_proxy")
-            cum_v = cum.get(key, bi)
+            cum_v = bi + cum.get(key, 0)
             new_v = max(0, cum_v - bi)
         funds.append({
             "code": f["code"], "name": f["name"], "short": f["name"][:10],

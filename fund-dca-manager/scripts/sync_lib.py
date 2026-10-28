@@ -20,6 +20,7 @@ database_id 不写死在这里，从 dca_plan.json 的 library.databases.{accoun
                     周期周 平台策略 周投基准 [额度上限·可选] 估值指数 指数偏差说明 手工分位 备注
 """
 import argparse
+import csv
 import json
 import os
 import subprocess
@@ -96,6 +97,29 @@ def fmt(v, money=False):
     return ("%.4f" % v).rstrip("0").rstrip(".")
 
 
+def ledger_cum(plan, data_dir):
+    """台账累计已投 {account|code: 金额}，口径与 dca_weekly.load_ledger 一致（按 actual 累加）。
+
+    存在的理由：表里的「累计投入」是**总累计投入**（用户视角），而配置里的 invested 是
+    **启用台账之前的历史持仓**（dca_weekly 会再加一遍台账累计）。两者若无桥，pull 会把
+    投资金句直接写进 invested，渲染时累计投入被重复计一次（001592 实测 2700+2500=5200）。
+    """
+    out_dir = plan.get("output_dir") or os.path.join(data_dir, "定投记录")
+    p = os.path.join(out_dir, "ledger.csv")
+    tot = {}
+    if not os.path.exists(p):
+        return tot
+    with open(p, "r", encoding="utf-8-sig", newline="") as f:
+        for row in csv.DictReader(f):
+            k = "%s|%s" % (row.get("account", ""), row.get("fund_code", ""))
+            try:
+                amt = float(row.get("actual") or 0)
+            except ValueError:
+                amt = 0
+            tot[k] = tot.get(k, 0) + amt
+    return tot
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", choices=["pull", "push", "diff"])
@@ -119,6 +143,7 @@ def main():
         raise SystemExit("dca_plan.json 的 library.databases 缺 account / position，先建表并写入 database_id")
     acc_rows = query(db_acc)
     pos_rows = query(db_pos)
+    cum = ledger_cum(plan, data_dir)
 
     local = {}   # code -> 合并后的本地视图
     acct_of = {}
@@ -129,13 +154,17 @@ def main():
     cfg = {f["code"]: f for f in plan["funds"]}
 
     # 本地期望值（以表字段名组织）
-    def local_view(code):
+    def local_view(code, acct):
         f = local.get(code, {})
         g = cfg.get(code, {})
+        # 表里的「累计投入」= 总累计；配置 invested = 台账前历史 → 用台账累计补齐差额
+        base_inv = f.get("invested_known") if f.get("amount") is None else g.get("invested")
+        if base_inv is None:
+            base_inv = g.get("invested")
         return {
             "当前市值": f.get("amount"),
             "成本价": f.get("cost"),
-            "累计投入": f.get("invested_known") if f.get("amount") is None else g.get("invested"),
+            "累计投入": (base_inv or 0) + cum.get("%s|%s" % (acct, code), 0),
             "份额": f.get("shares") or g.get("shares"),
             "单期定投额": f.get("dca_amount"),
             "周期周": f.get("cadence_weeks"),
@@ -151,8 +180,8 @@ def main():
     if a.cmd in ("push", "diff"):
         changes, adds = [], []
         by_code = {r.get("代码"): r for r in pos_rows}
-        for code in [f["code"] for acc in hold["accounts"] for f in acc["funds"]]:
-            want = local_view(code)
+        for acct, code in [(acc["id"], f["code"]) for acc in hold["accounts"] for f in acc["funds"]]:
+            want = local_view(code, acct)
             row = by_code.get(code)
             if not row:
                 adds.append(code)
@@ -196,7 +225,7 @@ def main():
                 for code in adds:
                     f = dict(local[code])
                     g = cfg.get(code, {})
-                    w = local_view(code)
+                    w = local_view(code, f["_acct"])
                     rows.append({
                         "账户": {"select": "主账户" if f["_acct"] == "A" else "副账户"},
                         "代码": {"text": code},
@@ -252,7 +281,9 @@ def main():
                 if "估值指数" in r:
                     g["index_code"] = r.get("估值指数") or ""
                 if r.get("累计投入") is not None:
-                    g["invested"] = r["累计投入"]
+                    # 表值是总累计；扣掉台账已记部分，剩下的才是台账前历史
+                    g["invested"] = (r["累计投入"]
+                                     - cum.get("%s|%s" % (acc["id"], f["code"]), 0))
                 if r.get("份额") is not None:
                     g["shares"] = r["份额"]
 
