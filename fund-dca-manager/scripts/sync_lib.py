@@ -17,12 +17,17 @@ database_id 不写死在这里，从 dca_plan.json 的 library.databases.{accoun
 表结构（不要改字段名，改了本脚本要同步改）：
   「基金定投-账户」：账户ID 账户名称 总资金 周预算基准 周预算上限 说明
   「基金定投-持仓」：账户 代码 名称 当前市值 成本价 累计投入 份额 单期定投额
-                    周期周 平台策略 周投基准 [额度上限·可选] 估值指数 指数偏差说明 手工分位 备注
+                    周期周 平台策略 周投基准 [额度上限·可选] 估值指数 指数偏差说明
+                    手工分位 手工分位日 [重开] [不定档] 备注
+
+「重开」「不定档」「手工分位日」是结构化标记，2026-10-28 起入表：此前它们只存在于
+dca_plan.json，靠备注文本推断，换设备就丢。现在表是唯一真源，pull 直接读字段。
 """
 import argparse
 import csv
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime
@@ -37,7 +42,7 @@ PY = sys.executable
 ACC_FIELDS = ["账户ID", "账户名称", "总资金", "周预算基准", "周预算上限", "说明"]
 POS_FIELDS = ["账户", "代码", "名称", "当前市值", "成本价", "累计投入", "份额", "单期定投额",
               "周期周", "平台策略", "周投基准", "额度上限", "估值指数", "指数偏差说明",
-              "手工分位", "备注"]
+              "手工分位", "手工分位日", "重开", "不定档", "备注"]
 
 
 # ---------- 资料库读写 ----------
@@ -95,6 +100,32 @@ def fmt(v, money=False):
     if money:
         return "%.0f" % v if abs(v - round(v)) < 1e-9 else "%.2f" % v
     return ("%.4f" % v).rstrip("0").rstrip(".")
+
+
+def reopen_text(rp):
+    """reopen 结构 → 表里「重开」列的文本；没有则空串。"""
+    if not rp:
+        return ""
+    closed = rp.get("closed") or ""
+    opened = rp.get("opened") or ""
+    if closed and opened:
+        return "%s 清仓 → %s 重开" % (closed, opened)
+    return " → ".join(x for x in (closed, opened) if x) or "重开"
+
+
+def parse_reopen(text):
+    """表里「重开」列的文本 → reopen 结构。
+
+    解析不出标准格式时返回带 `_原文` 的真值对象：徽标照常显示，不因为文案不规范就
+    把「重开」这条事实丢掉。
+    """
+    text = (text or "").strip()
+    if not text:
+        return None
+    m = re.match(r"^(.+?)\s*清仓\s*→\s*(.+?)\s*重开$", text)
+    if m:
+        return {"closed": m.group(1).strip(), "opened": m.group(2).strip()}
+    return {"closed": "", "opened": "", "_原文": text}
 
 
 def ledger_cum(plan, data_dir):
@@ -172,6 +203,9 @@ def main():
             "额度上限": g.get("pool"),
             "估值指数": g.get("index_code") or "",
             "手工分位": g.get("manual_percentile"),
+            "手工分位日": g.get("manual_percentile_asof") or "",
+            "重开": reopen_text(g.get("reopen")),
+            "不定档": bool(g.get("no_tier")),
             "平台策略": f.get("strategy") or "",
             "备注": f.get("note") or "",
         }
@@ -189,7 +223,11 @@ def main():
             props = {}
             for k, v in want.items():
                 cur = row.get(k)
-                if isinstance(v, (int, float)) or isinstance(cur, (int, float)):
+                if k == "不定档":
+                    # 复选框「未勾选」与「未设置」语义相同；按数值比较会让
+                    # False vs None 永远判为差异，diff 永不收敛
+                    same = bool(v) == bool(cur)
+                elif isinstance(v, (int, float)) or isinstance(cur, (int, float)):
                     same = (v is None and cur is None) or (
                         isinstance(v, (int, float)) and isinstance(cur, (int, float))
                         and abs(float(v) - float(cur)) < 1e-6)
@@ -199,6 +237,9 @@ def main():
                     if k == "额度上限":
                         # 可选字段：本地没设限额时要能「删掉」，所以显式传 null 清空
                         props[k] = {"number": float(v)} if v is not None else {"number": None}
+                    elif k == "不定档":
+                        # 复选框要能表达「取消勾选」，False 也必须写下去
+                        props[k] = {"checkbox": bool(v)}
                     elif k in ("当前市值", "累计投入", "单期定投额", "周投基准"):
                         props[k] = {"currency": float(v)} if v is not None else None
                     elif k in ("成本价", "份额", "周期周", "手工分位"):
@@ -232,6 +273,7 @@ def main():
                         "名称": {"text": f.get("name") or g.get("name") or ""},
                         **{k: ({"currency": float(v)} if k in ("当前市值", "累计投入", "单期定投额", "周投基准", "额度上限")
                                else {"number": float(v)} if k in ("成本价", "份额", "周期周", "手工分位")
+                               else {"checkbox": bool(v)} if k == "不定档"
                                else {"text": str(v or "")})
                            for k, v in w.items() if v is not None},
                     })
@@ -273,6 +315,20 @@ def main():
                 for k, src in [("base_weekly", "周投基准"), ("manual_percentile", "手工分位")]:
                     if src in r:
                         g[k] = r.get(src)
+                # 重开 / 不定档 / 手工分位日：表是唯一真源。表里空＝没有，不沿用本地上次的
+                # 值——否则本地会慢慢长出一份表里查不到的「影子数据」，换设备就丢。
+                if r.get("重开"):
+                    g["reopen"] = parse_reopen(r["重开"])
+                else:
+                    g.pop("reopen", None)
+                if r.get("不定档"):
+                    g["no_tier"] = True
+                else:
+                    g.pop("no_tier", None)
+                if r.get("手工分位日"):
+                    g["manual_percentile_asof"] = r["手工分位日"]
+                else:
+                    g.pop("manual_percentile_asof", None)
                 # 额度上限是可选字段：表里为空 = 未设单只限额，本地不要留 "pool": null
                 if r.get("额度上限") not in (None, ""):
                     g["pool"] = r["额度上限"]
