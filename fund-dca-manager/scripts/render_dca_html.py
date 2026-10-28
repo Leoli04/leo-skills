@@ -964,8 +964,17 @@ table,.acc,.cons>div{break-inside:avoid}
                  % "、".join("%s（%s）" % (esc(f["name"]), esc(f["reopen"].get("opened", "")))
                             for f in reop))
 
-    # 02 持仓评估与建议
-    h.extend(assess(funds, hold, accounts, rules))
+    # 02 持仓评估与建议（holdings_ref 未配或台账缺失时只出提示，不中断渲染）
+    if hold:
+        h.extend(assess(funds, hold, accounts, rules))
+    else:
+        h.append('<h2><span class="n">02</span>持仓评估与建议</h2>')
+        h.append('<p class="note">本节跳过：<b>dca_plan.json 未配置 holdings_ref</b>，'
+                 '或它指向的持仓台账文件不存在。补齐方式：先跑 <b>sync_lib.py pull</b> '
+                 '从资料库数据表拉取持仓生成本地 JSON，再把该文件名写进 '
+                 '<b>dca_plan.json</b> 的 <b>holdings_ref</b> 字段。'
+                 '未补之前，其余各节的估值、档位与投入结构照常有效，'
+                 '只是缺「权重 × 分位」这一层的矛盾诊断。</p>')
 
     # 03 估值分位
     if funds:
