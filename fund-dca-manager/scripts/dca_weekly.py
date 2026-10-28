@@ -605,6 +605,32 @@ def main():
         o("⚠ 无估值分位（本周不分配，不代表不该买）：%s" % "、".join(nodata))
         o("   原因：蛋卷无对应指数数据。补法：在配置里给该只加 manual_percentile 字段填分位值。")
 
+    # 手工分位有保质期：行业口径靠人工测算，季度换仓后成分与估值都会漂移。
+    # 不设告警就会静默失效——档位看起来正常，其实锚在三周前的数据上。
+    stale_days = int(anc.get("manual_pct_stale_days") or 90)
+    stale = []
+    for r in rows:
+        fm = r["fund"]
+        if fm.get("manual_percentile") in (None, ""):
+            continue
+        a = fm.get("manual_percentile_asof")
+        if not a:
+            stale.append((fm["name"], "缺 manual_percentile_asof，无法判断时效"))
+            continue
+        try:
+            age = (datetime.datetime.strptime(str(run_date), "%Y-%m-%d")
+                   - datetime.datetime.strptime(str(a), "%Y-%m-%d")).days
+        except (TypeError, ValueError):
+            stale.append((fm["name"], "manual_percentile_asof 不可解析：%s" % a))
+            continue
+        if age > stale_days:
+            stale.append((fm["name"], "手工分位已 %d 天" % age))
+    if stale:
+        o()
+        o("⚠ 手工分位过期（阈值 %d 天），档位可能已失真，需重算持仓估值：" % stale_days)
+        for n, why in stale:
+            o("   %s  %s" % (n, why))
+
     if any(r["need"] > r["alloc"] for r in rows):
         o()
         o("预算不足的标的已按估值分位排后，不是不买；下周分位变化后可能重新排前。")

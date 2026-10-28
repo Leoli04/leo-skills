@@ -107,7 +107,8 @@
     "bond10y": 1.65,
     "bond10y_asof": "2026-10-21",
     "dd_warn_dd": -30.0,
-    "dd_warn_pct": 40.0
+    "dd_warn_pct": 40.0,
+    "manual_pct_stale_days": 90
   },
   "funds": [
     {
@@ -148,6 +149,22 @@
       "shares": 6400.0,
       "base_weekly": 50,
       "note": "示例：无接口数据走 manual_percentile"
+    },
+    {
+      "code": "001643",
+      "name": "汇丰晋信智造先锋股票A",
+      "account": "A",
+      "index_code": "SH000827",
+      "index_proxy": {
+        "actual": "中证光伏产业(931151)",
+        "note": "示例：蛋卷无任何光伏-新能源指数估值（931151/931009/930997/000941/399808 全 NULL），仅中证环保可用。持仓 8 只光伏占净值 58.2%、7/8 PE_TTM 为负，故弃 PE 用 PB；分位取自建组合实测，多口径 1.8/3.5/10.4/13.5 取最保守 13.5"
+      },
+      "manual_percentile": 13.5,
+      "manual_percentile_asof": "2026-10-27",
+      "invested": 61300,
+      "shares": 21702.4,
+      "base_weekly": 300,
+      "note": "示例：行业占净值 ≥50% 按行业立口径，禁用宽基；手工分位必须带 asof，超 manual_pct_stale_days 告警"
     }
   ]
 }

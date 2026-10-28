@@ -651,6 +651,10 @@ def build(cfg, ledger, weeks, snap=None, hold=None):
             week_v = (s.get("done", 0) or 0) + (s.get("alloc", 0) or 0)
             tier_lv = s.get("tier") or "-"
             src = s.get("src", "-")
+            # src=手工 时分位来自自建组合或研报，与 index_code 的接口 PE 不是同一个东西。
+            # 同一行并列会出现「PE 24.52 却在 13.5% 分位」这种自相矛盾，宁可留空。
+            if src == "手工":
+                pe = None
             proxy = s.get("index_proxy")
             cum_v = s.get("cum_total") or (s.get("invested", 0) or 0) + (s.get("alloc", 0) or 0)
             new_v = s.get("new_total")
@@ -945,6 +949,8 @@ table,.acc,.cons>div{break-inside:avoid}
                                 % esc(f["reopen"].get("opened", "")))
                 if f.get("tier_note"):
                     tags.append('<span class="src">%s</span>' % esc(f["tier_note"]))
+                if f.get("src") == "手工":
+                    tags.append('<span class="src">手工分位</span>')
                 h.append('<tr><td>%s</td><td class="num">%s</td>'
                          '<td class="num">%s</td><td class="num">%s</td>'
                          '<td><span class="tier t-%s">%s</span></td><td>%s</td><td>%s</td></tr>'
@@ -1067,6 +1073,10 @@ table,.acc,.cons>div{break-inside:avoid}
             for f in proxied:
                 px = f["proxy"] or {}
                 used = f["index"] or "无（本周不分配）"
+                # 手工分位并不来自 index_code 的接口值，写成「SH000827」会让人以为
+                # 13.5% 是该指数的分位（实际是 31.9%），必须点明两者关系。
+                if f.get("src") == "手工":
+                    used = "自建/研报测算（%s 仅作参照）" % (f["index"] or "-")
                 h.append('<tr><td>%s</td><td class="src">%s</td><td class="idx">%s</td>'
                          '<td class="src" style="white-space:normal">%s</td></tr>'
                          % (esc(f["name"]), esc(px.get("actual", "-")),
