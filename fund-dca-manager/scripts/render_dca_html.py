@@ -3,7 +3,7 @@
 定投台账 HTML 渲染器
 ------------------------------------------------------------
 输入：dca_plan.json（配置）+ 定投记录/ledger.csv（台账）
-输出：单文件 HTML，零 CDN、零 JS、双击即看、可打印
+输出：单文件 HTML，零外链、零 CDN、双击即看、可打印
 
 用法：
   python render_dca_html.py                    # 默认读同目录配置与台账
@@ -188,6 +188,13 @@ def money(v):
     return "{:,.0f}".format(v)
 
 
+def wan(v):
+    """卡片刻度用的紧凑金额。KPI 副标题只有一行，写全 6 位数会把账户拆分发挤没。"""
+    if abs(v) >= 10000:
+        return "%.1f 万" % (v / 10000.0)
+    return money(v)
+
+
 def fname(f):
     """基金名 + 代码。只有名字时在交易软件里搜不到，同名不同类的基金也分不清，
     所以凡是给人看的基金名一律带代码。"""
@@ -358,7 +365,9 @@ def load_holdings(cfg_path, cfg):
             nv = navs.get(c) or {}
             if nv.get("date") and nv["date"] > nav_date:
                 nav_date = nv["date"]
-            out[c] = {
+            # 必须按 (账户, 代码) 索引：两个账户完全可能持有同一只基金，
+            # 只按代码存会让后一只静默覆盖前一只，账户市值直接少一块。
+            out["%s|%s" % (a.get("id"), c)] = {
                 "code": c,
                 "name": f.get("name") or nv.get("name") or c,
                 "amount": f.get("amount"), "cost": f.get("cost"),
@@ -368,6 +377,13 @@ def load_holdings(cfg_path, cfg):
     return {"funds": out, "nav_date": nav_date, "file": os.path.basename(p)}
 
 
+def hhold(hold, f):
+    """按 (账户, 代码) 取持仓行。旧格式只按代码索引，这里留兼容兜底。"""
+    hm = (hold or {}).get("funds") or {}
+    return (hm.get("%s|%s" % (f.get("account", ""), f.get("code", "")))
+            or hm.get(f.get("code")) or {})
+
+
 def assess(funds, hold, accounts, rules):
     """核账 → 诊断 → 建议。只依据可复算的两件事：仓位权重、估值分位。
     不做「看好/不看好」的主观评级，输出的是「矛盾点 + 可执行动作」。"""
@@ -375,7 +391,7 @@ def assess(funds, hold, accounts, rules):
     rows = []
     acct_mv = {}
     for f in funds:
-        h = hm.get(f["code"]) or {}
+        h = hhold(hold, f)
         amt, cost, nav = h.get("amount"), h.get("cost"), h.get("nav")
         r = {"f": f, "amount": amt, "cost": cost, "nav": nav, "ok": False, "weight": None}
         if amt and cost and nav:
@@ -442,19 +458,32 @@ def assess(funds, hold, accounts, rules):
             r["advice"] = "C 档（%.1f×）：减速维持，不加不减；档位不改善就不值得加码" % factor
 
     live = [r for r in rows if r["ok"]]
+    # 权重是「账户内市值占比」，分母各不相同 —— 跨账户相加没有意义（55.7% + 70.3% = 126%）。
+    # 所以账户内排序单独存一份，凡是要「前二」「合计」的地方一律在账户内算。
+    acct_by = {}
+    for a in accounts:
+        acct_by[a["id"]] = sorted([r for r in live if r["f"]["account"] == a["id"]],
+                                  key=lambda r: -r["weight"])
     by_w = sorted(live, key=lambda r: -r["weight"])
     top1 = by_w[0] if by_w else None
-    top2 = sum(r["weight"] for r in by_w[:2])
-    # 「高位重仓」按排名给不同措辞：只有第一名能说「占比最大」
+    _t_acct = next((a for a in accounts if top1 and a["id"] == top1["f"]["account"]), None)
+    top_acct = (_t_acct or {}).get("name") or (top1["f"]["account"] if top1 else "")
+    top2 = sum(r["weight"] for r in acct_by.get(top1["f"]["account"], [])[:2]) if top1 else 0
+    # 每个账户内部的最高单只权重：这才是「集中度」，跨账户只能并排看，不能加总
+    acct_max = [(a, acct_by[a["id"]][0]) for a in accounts if acct_by.get(a["id"])]
+    # 「高位重仓」按排名给不同措辞：只有账户内第一名能说「占比最大」
     for i, r in enumerate(by_w):
         if r.get("dgt") != "高位重仓":
             continue
-        if i == 0:
+        _peers = acct_by.get(r["f"]["account"], [])
+        _p2 = sum(x["weight"] for x in _peers[:2])
+        if _peers and _peers[0] is r:
             r["advice"] = ("停投已生效。占比最大 + 估值最贵 + 没有新钱摊薄，三条同时成立；"
                            "回本需涨 %.0f%%" % r["need"])
         else:
-            r["advice"] = ("权重 %.1f%%，与第一位合计 %.1f%%，同样处在停投区、没有新钱摊薄；"
-                           "回本需涨 %.0f%%，减不减取决于你是否接受这个集中度" % (r["weight"], top2, r["need"]))
+            r["advice"] = ("权重 %.1f%%，与账户内第一位合计 %.1f%%，同样处在停投区、没有新钱摊薄；"
+                           "回本需涨 %.0f%%，减不减取决于你是否接受这个集中度"
+                           % (r["weight"], _p2, r["need"]))
     def _fac(r):
         v = r["f"].get("factor")
         if v is not None:
@@ -481,7 +510,7 @@ def assess(funds, hold, accounts, rules):
     week_total = sum(f["week"] for f in funds)
     # 权益占比：按净值缓存里的基金类型判，含「债/货币」才算非权益
     bond = [f for f in funds
-            if any(k in ((hm.get(f["code"]) or {}).get("type") or "") for k in ("债", "货币"))]
+            if any(k in ((hhold(hold, f).get("type") or "")) for k in ("债", "货币"))]
     eq_n = len(funds) - len(bond)
 
     h = []
@@ -509,10 +538,11 @@ def assess(funds, hold, accounts, rules):
                          else 1) <= 0) else "warn"
         pct_top = ("%.1f%%" % top1["f"]["pct"]) if top1["f"]["pct"] is not None else "无分位"
         h.append('<div class="%s"><div class="t">最大风险</div>'
-                 '<div class="v">%s 占 %.1f%%</div>'
+                 '<div class="v">%s 占%s %.1f%%</div>'
                  '<div class="d">分位 %s（%s 档）、浮亏 %.1f%%，回本需涨 %.0f%%。'
-                 '它一只贡献了 %.0f%% 的浮亏——组合涨跌基本由它决定，而且现在没有新钱能摊薄。</div></div>'
-                 % (cls, esc(top1["f"]["name"][:12]), top1["weight"], pct_top,
+                 '它一只贡献了 %.0f%% 的浮亏——组合涨跌基本由它决定，而且现在没有新钱能摊薄。'
+                 '（权重分母是<b>所在账户</b>的市值。）</div></div>'
+                 % (cls, esc(top1["f"]["name"][:12]), esc(top_acct), top1["weight"], pct_top,
                     esc(top1["f"]["tier"]), top1["pnl_pct"], top1["need"],
                     (-top1["pnl"] / lose_sum * 100) if top1["pnl"] < 0 else 0))
     else:
@@ -524,19 +554,23 @@ def assess(funds, hold, accounts, rules):
                  '<div class="d">%s。同期分位 ≤22%% 的资产只有 %d 只、占 %.1f%% 市值、本周拿到 %s 元。'
                  '预算闲置不是因为没钱，是因为便宜的不在名单上。</div></div>'
                  % (money(idle_total),
-                    "、".join("%s 账户预算 %s 只用 %s" % (x["id"], money(x["cap"]), money(x["used"]))
+                    "、".join("%s 预算 %s 只用 %s" % (x["name"] or x["id"], money(x["cap"]), money(x["used"]))
                              for x in idle if x["left"] > 0),
                     len(cheap), cheap_mv / total_mv * 100 if total_mv else 0, money(cheap_week)))
     h.append('<div class="neutral"><div class="t">结构</div>'
              '<div class="v">停投区占 %.0f%% 市值</div>'
-             '<div class="d">两锚一致判停投的标的合计 %s 元，前二权重 %.1f%%；%d 只为权益类，'
-             '债/货币 %d 只。想加仓只能靠分位回落，不是靠加钱。</div></div>'
-             % (stop_share, money(stop_mv), top2, eq_n, len(bond)))
+             '<div class="d">两锚一致判停投的标的合计 %s 元；%d 只为权益类，'
+             '债/货币 %d 只。各账户最大单只：%s —— '
+             '想加仓只能靠分位回落，不是靠加钱。</div></div>'
+             % (stop_share, money(stop_mv), eq_n, len(bond),
+                "、".join("%s %.1f%%" % (esc(a.get("name", a["id"])), r["weight"])
+                         for a, r in acct_max) or "—"))
     h.append('</div>')
 
     # ---- 逐只诊断 ----
     h.append('<h3>逐只诊断</h3>')
-    h.append('<table><thead><tr><th>基金</th><th class="num">权重</th><th class="num">浮盈亏</th>'
+    h.append('<table><thead><tr><th>基金</th><th>账户</th><th class="num">权重</th>'
+             '<th class="num">浮盈亏</th>'
              '<th class="num">分位</th><th>诊断</th><th>建议</th></tr></thead><tbody>')
     for r in sorted(rows, key=lambda x: -(x["weight"] if x["weight"] is not None else -1)):
         f = r["f"]
@@ -550,14 +584,20 @@ def assess(funds, hold, accounts, rules):
         pct = ("%.1f%%" % f["pct"]) if f["pct"] is not None else "—"
         tier = ('<span class="tier t-%s">%s</span>' % (esc(f["tier"]), esc(f["tier"]))
                 if f["tier"] and f["tier"] != "-" else '<span class="tier t--">-</span>')
-        h.append('<tr><td>%s</td><td class="num">%s</td><td class="num">%s</td>'
+        h.append('<tr><td>%s</td><td class="src">%s</td><td class="num">%s</td>'
+                 '<td class="num">%s</td>'
                  '<td class="num">%s %s</td>'
                  '<td><span class="dg dg-%s">%s</span></td>'
                  '<td class="src" style="white-space:normal">%s</td></tr>'
-                 % (fname(f), w, pnl, pct, tier, r["dg"], r["dgt"], esc(r["advice"])))
+                 % (fname(f), esc(f["account"]), w, pnl, pct, tier,
+                    r["dg"], r["dgt"], esc(r["advice"])))
     h.append('</tbody></table>')
     h.append('<p class="note">浮盈亏按 A 股习惯配色：<b>红 = 盈利、绿 = 亏损</b>；分位标尺里的绿色含义不同，'
-             '那是「分位 ≤22%、估值便宜」。权重按账户内市值占比算，B 账户两只暂无市值故为「—」。</p>')
+             '那是「分位 ≤22%%、估值便宜」。<b>权重按各自账户内的市值占比算，两个账户的分母不同</b>——'
+             '%s，这些百分比不在同一个池子里，既不能相加，也不能直接比谁更集中。</p>'
+             % ("　·　".join("%s %s %.1f%%" % (esc(a.get("name", a["id"])),
+                                              esc(r["f"]["name"][:10]), r["weight"])
+                            for a, r in acct_max) or "—"))
 
     # ---- 两个方案 ----
     cheap_low = sorted([r for r in cheap if r["weight"] < 5], key=lambda r: r["weight"])
@@ -565,7 +605,9 @@ def assess(funds, hold, accounts, rules):
     a_raise = raise_base["f"]["week"] if raise_base else 0
     b_add = 150 if len(idle) > 1 else 0
     new_week = week_total + a_raise + b_add
-    new_cheap = cheap_week + a_raise
+    # 两笔增量都落在分位 ≤22% 的标的上（B 的 013125 分位 14.7% 也在其中），
+    # 所以「便宜资产拿到的钱」要把 b_add 一起加进来，否则总数涨了、便宜那栏不动，自相矛盾
+    new_cheap = cheap_week + a_raise + b_add
     h.append('<h3>两个可执行方案</h3>')
     h.append('<p class="note">A 只动新钱，存量不动，随时可停；B 要动存量，需要更高确信。'
              '本表只给<b>触发条件与相对幅度</b>，<b>不给具体执行金额</b>——'
@@ -575,9 +617,10 @@ def assess(funds, hold, accounts, rules):
              '</tr></thead><tbody>')
     a_rows = []
     a_rows.append(("账户预算",
-                   "A 账户预算 %s 只用 %s，闲置 %s：要么把 cap 降到实际投入，"
+                   "%s 预算 %s 只用 %s，闲置 %s：要么把 cap 降到实际投入，"
                    "要么把闲置记为「低估加仓储备」，等分位下移一次性投"
-                   % (money(idle[0]["cap"]), money(idle[0]["used"]), money(max(0, idle[0]["left"])))
+                   % (idle[0]["name"] or idle[0]["id"], money(idle[0]["cap"]),
+                      money(idle[0]["used"]), money(max(0, idle[0]["left"])))
                    if idle else "—",
                    "不动预算，只改配置口径"))
     if raise_base:
@@ -590,7 +633,7 @@ def assess(funds, hold, accounts, rules):
                        "不涉及"))
     if len(idle) > 1:
         b_acct = idle[1]
-        a_rows.append(("B 账户预算不够",
+        a_rows.append(("%s 预算不够" % (b_acct["name"] or b_acct["id"]),
                        "预算 %s 全给分位最低那只（S 档要 %s），其余 B 档被挤成 0：cap 提到 %s 才能让 B 档落地"
                        % (money(b_acct["cap"]),
                           money(sum((f.get("base_w") or 0) * 4 for f in funds
@@ -600,13 +643,16 @@ def assess(funds, hold, accounts, rules):
                        "不涉及"))
     if top1:
         cut = top1["amount"] / 3
+        # 30% 上限必须对「该持仓所在账户」的市值算，用全页合计会把门槛抬到 3.4 万、
+        # 算出「需减 0 元」这种假结论（合计市值里有另一个账户的钱，跟这条上限无关）。
+        _t_mv = sum(r["amount"] for r in live if r["f"]["account"] == top1["f"]["account"])
         a_rows.append(("处置高位重仓",
                        "不减仓，只设条件：分位涨过 70%%（E 档）或净值回到成本 %.4f（+%.0f%%）时再决定"
                        % (top1["cost"], top1["need"]),
-                       "减 1/3 ≈ %s 元，转入分位 ≤22%% 的两只；单只上限设 30%%，"
-                       "当前 %.1f%% 需减约 %s 元"
-                       % (money(cut), top1["weight"],
-                          money(max(0, top1["amount"] - total_mv * 0.3)))))
+                       "减 1/3 ≈ %s 元，转入同账户分位 ≤22%% 的标的；单只上限设 30%%"
+                       "（= %s 元），当前 %.1f%% 需减约 %s 元"
+                       % (money(cut), money(_t_mv * 0.3), top1["weight"],
+                          money(max(0, top1["amount"] - _t_mv * 0.3)))))
     for item, a_txt, b_txt in a_rows:
         h.append('<tr><td>%s</td><td class="src" style="white-space:normal">%s</td>'
                  '<td class="src" style="white-space:normal">%s</td></tr>'
@@ -704,13 +750,43 @@ def build(cfg, ledger, weeks, snap=None, hold=None):
             "base_w": f.get("base_weekly", 0),
         })
 
-    week_total = sum(f["week"] for f in funds)
-    cum_total = sum(f["cum"] for f in funds)
-    use_rate = cum_total / total_cap * 100 if total_cap else 0
+    # ---- 账户维度汇总 ----
+    # 两个账户的资金池与周预算完全独立（配置里 accounts 是并列的），
+    # 把它们加总成一张卡会掩盖「哪边在闲置、哪边已用满」。
+    # 下面这个函数是全页唯一的账户级聚合口径，KPI、账户对照表都读它。
+    def _agg(acc_id=None):
+        sel = [f for f in funds if acc_id is None or f["account"] == acc_id]
+        acct = next((a for a in accounts if a["id"] == acc_id), None) if acc_id else None
+        cap = (acct or {}).get("total_capital", 0) or 0
+        bud = (acct or {}).get("weekly_budget_cap", 0) or 0
+        if acc_id is None:
+            cap = sum(a.get("total_capital", 0) or 0 for a in accounts)
+            bud = sum(a.get("weekly_budget_cap", 0) or 0 for a in accounts)
+        cumv = sum(f["cum"] for f in sel)
+        newv = sum(f.get("new") or 0 for f in sel)
+        basev = sum(f.get("base_inv") or 0 for f in sel)
+        weekv = sum(f["week"] for f in sel)
+        mvv = sum((hhold(hold, f).get("amount") or 0) for f in sel)
+        ps = [f["pct"] for f in sel if f["pct"] is not None]
+        return {
+            "id": acc_id or "total", "n": len(sel), "n_pct": len(ps),
+            "week": weekv, "cum": cumv, "new": newv, "base": basev,
+            "mv": mvv, "pnl": mvv - cumv, "cap": cap, "bud": bud,
+            "avg": (sum(ps) / len(ps)) if ps else None,
+            "use": (cumv / cap * 100) if cap else 0.0,
+            "bud_use": (weekv / bud * 100) if bud else 0.0,
+        }
+
+    agg_all = _agg(None)
+    agg_map = dict((a["id"], _agg(a["id"])) for a in accounts)
+
+    week_total = agg_all["week"]
+    cum_total = agg_all["cum"]
+    use_rate = agg_all["use"]
     # 当前市值只取持仓快照的真实数字，不叠加任何估算额度
-    mv_now = sum((v.get("amount") or 0) for v in ((hold or {}).get("funds") or {}).values())
+    mv_now = agg_all["mv"]
     pcts = [f["pct"] for f in funds if f["pct"] is not None]
-    avg_pct = sum(pcts) / len(pcts) if pcts else 0
+    avg_pct = agg_all["avg"] or 0
 
     # 告警
     alerts = []
@@ -796,11 +872,24 @@ header{border-bottom:2px solid var(--ink);padding-bottom:20px}
 h1{font-size:27px;font-weight:400;margin:0 0 8px;line-height:1.3}
 .sub{font-size:13.5px;color:var(--ink2);margin:0}
 .meta{font-size:11.5px;color:var(--ink3);margin-top:12px;display:flex;gap:18px;flex-wrap:wrap}
-.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:11px;margin:22px 0 6px}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:11px;margin:8px 0 6px}
 .kpi{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:13px 15px}
 .kpi .l{font-size:10.5px;color:var(--ink3);letter-spacing:.05em;margin-bottom:5px}
 .kpi .v{font-size:21px;font-weight:500;line-height:1.15;letter-spacing:-.02em}
-.kpi .h{font-size:10.5px;color:var(--ink3);margin-top:3px}
+.kpi .h{font-size:10.5px;color:var(--ink3);margin-top:3px;line-height:1.5}
+/* 账户切换器：与右上角主题条同一套交互（脚本里绑 onclick，不用内联属性，
+   资料库副本会剥内联 onclick，绑在脚本里才活得下来） */
+.kpihead{display:flex;justify-content:space-between;align-items:center;gap:10px;
+margin:24px 0 8px;flex-wrap:wrap}
+.kpit{font-size:11px;letter-spacing:.12em;color:var(--ink3)}
+.segs{display:inline-flex;gap:2px;background:var(--surface);border:1px solid var(--line);
+border-radius:16px;padding:2px}
+.segs button{font:inherit;font-size:11px;border:0;background:transparent;color:var(--ink3);
+padding:3px 10px;border-radius:13px;cursor:pointer;line-height:1.4;white-space:nowrap}
+.segs button:hover{color:var(--ink)}
+.segs button.on{background:var(--ink);color:var(--bg)}
+.tw{overflow-x:auto;-webkit-overflow-scrolling:touch}
+tr.sum td{border-top:1.5px solid var(--line2);color:var(--ink);font-weight:600}
 h2{font-size:18px;font-weight:400;margin:38px 0 4px;letter-spacing:-.01em}
 h2 .n{color:var(--ink3);font-size:12px;letter-spacing:.1em;margin-right:9px;vertical-align:1px}
 h3{font-size:13.5px;font-weight:600;margin:22px 0 2px;color:var(--ink)}
@@ -906,20 +995,113 @@ table,.acc,.cons>div{break-inside:avoid}
                 len(accounts), len(funds)))
     h.append('</header>')
 
-    # KPI
+    # KPI —— 按账户分开
+    # 两个账户资金池独立、周预算独立（配置里 accounts 是并列的），混成一个数字会掩盖
+    # 「哪边闲置、哪边用满」。卡片可切账户（合计 / 各账户），下方对照表即使禁用 JS
+    # 也能读到全部账户——切换只是省纵向空间，不是唯一的读数路径。
+    def _kv(acc_id):
+        g = agg_all if acc_id == "total" else agg_map[acc_id]
+        d = {
+            "week": money(g["week"]), "cum": money(g["cum"]),
+            "mv": money(g["mv"]) if g["mv"] else "—",
+            "avg": ("%.1f%%" % g["avg"]) if g["avg"] is not None else "—",
+        }
+        if acc_id == "total":
+            d["h_week"] = "本周记录合计（%s）" % " · ".join(
+                "%s %s" % (a.get("name", a["id"]), money(agg_map[a["id"]]["week"]))
+                for a in accounts)
+            d["h_cum"] = "历史 + 台账（%s）" % " · ".join(
+                "%s %s" % (a.get("name", a["id"]), wan(agg_map[a["id"]]["cum"]))
+                for a in accounts)
+            d["h_mv"] = "快照 %s · 合计浮动 %s%s" % (
+                (hold or {}).get("nav_date") or "-",
+                "+" if g["pnl"] >= 0 else "-", wan(abs(g["pnl"])))
+            d["h_avg"] = "%d 只简单平均（%s）" % (g["n_pct"], " · ".join(
+                "%s %s" % (a.get("name", a["id"]),
+                           ("%.1f%%" % agg_map[a["id"]]["avg"])
+                           if agg_map[a["id"]]["avg"] is not None else "—")
+                for a in accounts))
+        else:
+            d["h_week"] = "周预算 %s，本周执行 %.0f%%" % (money(g["bud"]), g["bud_use"])
+            d["h_cum"] = "历史 %s + 台账 %s" % (wan(g["base"]), wan(g["new"]))
+            d["h_mv"] = "资金池 %s，已用 %.1f%%" % (wan(g["cap"]), g["use"])
+            d["h_avg"] = "%d 只有分位" % g["n_pct"]
+            if g["n"] - g["n_pct"]:
+                d["h_avg"] += "（%d 只无分位）" % (g["n"] - g["n_pct"])
+        return d
+
+    kpi_views = {"total": _kv("total")}
+    for a in accounts:
+        kpi_views[a["id"]] = _kv(a["id"])
+    cur = kpi_views["total"]
+
+    h.append('<div class="kpihead"><span class="kpit">关键指标</span>'
+             '<span class="segs" id="accseg">'
+             '<button type="button" data-k="total" class="on">合计</button>'
+             + "".join('<button type="button" data-k="%s">%s %s</button>'
+                       % (esc(a["id"]), esc(a.get("name", "")), esc(a["id"]))
+                       for a in accounts)
+             + '</span></div>')
     h.append('<div class="kpis">')
-    h.append('<div class="kpi"><div class="l">本周投入</div><div class="v">%s</div><div class="h">本周记录合计</div></div>' % money(week_total))
-    h.append('<div class="kpi"><div class="l">累计投入</div><div class="v">%s</div>'
-             '<div class="h">历史成本 + 台账新增（%d 只全口径）</div></div>'
-             % (money(cum_total), len(funds)))
-    h.append('<div class="kpi"><div class="l">当前市值</div><div class="v">%s</div>'
-             '<div class="h">%s</div></div>'
-             % (money(mv_now) if mv_now else "—",
-                "持仓快照日 %s" % esc((hold or {}).get("nav_date") or "-")
-                if mv_now else "未接入持仓快照"))
-    h.append('<div class="kpi"><div class="l">平均估值分位</div><div class="v">%.1f%%</div><div class="h">%d 只基金简单平均</div></div>'
-             % (avg_pct, len(pcts)))
+    h.append('<div class="kpi"><div class="l">本周投入</div>'
+             '<div class="v" data-kv="week">%s</div>'
+             '<div class="h" data-kh="h_week">%s</div></div>'
+             % (cur["week"], esc(cur["h_week"])))
+    h.append('<div class="kpi"><div class="l">累计投入</div>'
+             '<div class="v" data-kv="cum">%s</div>'
+             '<div class="h" data-kh="h_cum">%s</div></div>'
+             % (cur["cum"], esc(cur["h_cum"])))
+    h.append('<div class="kpi"><div class="l">当前市值</div>'
+             '<div class="v" data-kv="mv">%s</div>'
+             '<div class="h" data-kh="h_mv">%s</div></div>'
+             % (cur["mv"], esc(cur["h_mv"])))
+    h.append('<div class="kpi"><div class="l">平均估值分位</div>'
+             '<div class="v" data-kv="avg">%s</div>'
+             '<div class="h" data-kh="h_avg">%s</div></div>'
+             % (cur["avg"], esc(cur["h_avg"])))
     h.append('</div>')
+
+    # 账户对照：切换卡片只是省空间，这张表才是全量。即便禁用 JS 也能读到两个账户。
+    h.append('<div class="tw"><table><thead><tr><th>账户</th>'
+             '<th class="num">本周投入</th><th class="num">周预算</th>'
+             '<th class="num">累计投入</th><th class="num">资金池</th><th class="num">已用</th>'
+             '<th class="num">当前市值</th><th class="num">浮动盈亏</th>'
+             '<th class="num">平均分位</th></tr></thead><tbody>')
+    for a in accounts:
+        g = agg_map[a["id"]]
+        pc = "var(--warn)" if g["pnl"] >= 0 else "var(--buy)"
+        h.append('<tr><td>%s %s<span class="cd">%d 只</span></td>'
+                 '<td class="num">%s</td><td class="num">%s</td>'
+                 '<td class="num">%s</td><td class="num">%s</td><td class="num">%.1f%%</td>'
+                 '<td class="num">%s</td>'
+                 '<td class="num"><span style="color:%s">%s（%+.1f%%）</span></td>'
+                 '<td class="num">%s</td></tr>'
+                 % (esc(a.get("name", "")), esc(a["id"]), g["n"],
+                    money(g["week"]), money(g["bud"]), money(g["cum"]),
+                    money(g["cap"]), g["use"], money(g["mv"]),
+                    pc, money(g["pnl"]),
+                    (g["pnl"] / g["cum"] * 100) if g["cum"] else 0,
+                    ("%.1f%%" % g["avg"]) if g["avg"] is not None else "—"))
+    _pc = "var(--warn)" if agg_all["pnl"] >= 0 else "var(--buy)"
+    h.append('<tr class="sum"><td>合计<span class="cd">%d 只</span></td>'
+             '<td class="num">%s</td><td class="num">%s</td>'
+             '<td class="num">%s</td><td class="num">%s</td><td class="num">%.1f%%</td>'
+             '<td class="num">%s</td>'
+             '<td class="num"><span style="color:%s">%s（%+.1f%%）</span></td>'
+             '<td class="num">%s</td></tr>'
+             % (agg_all["n"], money(agg_all["week"]), money(agg_all["bud"]),
+                money(agg_all["cum"]), money(agg_all["cap"]), agg_all["use"],
+                money(agg_all["mv"]), _pc, money(agg_all["pnl"]),
+                (agg_all["pnl"] / agg_all["cum"] * 100) if agg_all["cum"] else 0,
+                ("%.1f%%" % agg_all["avg"]) if agg_all["avg"] is not None else "—"))
+    h.append('</tbody></table></div>')
+    h.append('<p class="note"><b>两本账不合并</b>：主账户与副账户的资金池、周预算各自独立，'
+             '所以「合计」只用于看总资产，<b>任何一档投入都不许跨账户挪用</b>。'
+             '「浮动盈亏」= 当前市值 − 累计投入（现金投入口径，含启用台账前的历史持仓）；'
+             '第 02 节的浮亏按「市值 ÷ 净值 × 成本价」算持仓成本，'
+             '有分红再投的 LOF（160222）两处会差几百元，属正常，不是算错。'
+             '「平均分位」只平均<b>当周有分位</b>的基金：主账户 9 只里 4 只无分位，'
+             '副账户 3 只全有，所以两边的平均值不是同一批标的的均值。</p>')
 
     # 01 今日档位评估（只给档位：金额属于执行决策，脚本不替用户拍）
     h.append('<h2><span class="n">01</span>今日档位评估</h2>')
@@ -1119,31 +1301,73 @@ table,.acc,.cons>div{break-inside:avoid}
     h.append('<h2><span class="n">04</span>持仓与投入结构</h2>')
     h.append('<p class="note">「历史持仓」是启用台账之前的存量成本，「台账新增」是此后按周记录的投入，'
              '两者相加等于累计投入；「当前市值」取持仓快照，差额就是浮动盈亏。'
-             '<b>本账户没有给任何一只基金设单只限额</b>，所以这里不显示额度占用——'
+             '<b>两个账户都没有给任何一只基金设单只限额</b>，所以这里不显示额度占用——'
              '每只投多少由你自己决定，本页只负责把已有持仓与档位算清楚。</p>')
     hm = (hold or {}).get("funds") or {}
-    h.append('<table><thead><tr><th>基金</th><th class="num">历史持仓</th><th class="num">台账新增</th>'
+    # 按账户分段列出，每段末尾给该账户小计——否则 12 只混排后，
+    # 「哪只的钱来自哪个账户」只能靠翻上面的对照表猜，跨账户还会被当成同一笔钱看。
+    _order = dict((a["id"], i) for i, a in enumerate(accounts))
+    h.append('<div class="tw"><table><thead><tr><th>基金</th><th>账户</th>'
+             '<th class="num">历史持仓</th><th class="num">台账新增</th>'
              '<th class="num">累计投入</th><th class="num">当前市值</th><th class="num">浮动盈亏</th>'
              '</tr></thead><tbody>')
-    for f in sorted(funds, key=lambda x: -(x["new"] + (x.get("base_inv") or 0))):
-        hh = hm.get(f["code"]) or {}
-        amt = hh.get("amount")
-        inv = (f.get("base_inv") or 0) + (f.get("new") or 0)
-        if amt:
-            pnl = amt - inv
-            # 与 02 节同口径：A 股红涨绿跌，盈利走 warn（红）、亏损走 buy（绿）
-            pc = "var(--warn)" if pnl >= 0 else "var(--buy)"
-            pnl_cell = '<span class="num" style="color:%s">%s（%+.1f%%）</span>' % (
-                pc, money(pnl), (amt / inv - 1) * 100 if inv else 0)
-            mv_cell = money(amt)
-        else:
-            pnl_cell = '<span class="src">市值待补</span>'
-            mv_cell = "—"
-        h.append('<tr><td>%s</td><td class="num">%s</td><td class="num">%s</td>'
-                 '<td class="num">%s</td><td class="num">%s</td><td class="num">%s</td></tr>'
-                 % (fname(f), money(f.get("base_inv") or 0), money(f.get("new") or 0),
-                    money(inv), mv_cell, pnl_cell))
-    h.append('</tbody></table>')
+    _sum_acc = []
+    for a in accounts:
+        af = sorted([f for f in funds if f["account"] == a["id"]],
+                    key=lambda x: -((x.get("base_inv") or 0) + (x.get("new") or 0)))
+        _s_base = _s_new = _s_mv = 0.0
+        _s_ok = True
+        for f in af:
+            hh = hhold(hold, f)
+            amt = hh.get("amount")
+            inv = (f.get("base_inv") or 0) + (f.get("new") or 0)
+            _s_base += (f.get("base_inv") or 0)
+            _s_new += (f.get("new") or 0)
+            if amt:
+                _s_mv += amt
+                pnl = amt - inv
+                # 与 02 节同口径：A 股红涨绿跌，盈利走 warn（红）、亏损走 buy（绿）
+                pc = "var(--warn)" if pnl >= 0 else "var(--buy)"
+                pnl_cell = '<span class="num" style="color:%s">%s（%+.1f%%）</span>' % (
+                    pc, money(pnl), (amt / inv - 1) * 100 if inv else 0)
+                mv_cell = money(amt)
+            else:
+                _s_ok = False
+                pnl_cell = '<span class="src">市值待补</span>'
+                mv_cell = "—"
+            h.append('<tr><td>%s</td><td class="src">%s</td><td class="num">%s</td>'
+                     '<td class="num">%s</td><td class="num">%s</td>'
+                     '<td class="num">%s</td><td class="num">%s</td></tr>'
+                     % (fname(f), esc(a["id"]), money(f.get("base_inv") or 0),
+                        money(f.get("new") or 0), money(inv), mv_cell, pnl_cell))
+        _s_inv = _s_base + _s_new
+        _s_pnl = _s_mv - _s_inv
+        _pc = "var(--warn)" if _s_pnl >= 0 else "var(--buy)"
+        h.append('<tr class="sum"><td colspan="2">小计 · %s %s（%d 只）</td>'
+                 '<td class="num">%s</td><td class="num">%s</td>'
+                 '<td class="num">%s</td><td class="num">%s</td>'
+                 '<td class="num"><span style="color:%s">%s（%+.1f%%）</span></td></tr>'
+                 % (esc(a.get("name", "")), esc(a["id"]), len(af),
+                    money(_s_base), money(_s_new), money(_s_inv),
+                    money(_s_mv) if _s_ok else money(_s_mv) + "*",
+                    _pc, money(_s_pnl), (_s_pnl / _s_inv * 100) if _s_inv else 0))
+        _sum_acc.append((_s_base, _s_new, _s_inv, _s_mv, _s_pnl, _s_ok))
+    if len(accounts) > 1:
+        _t_base = sum(x[0] for x in _sum_acc)
+        _t_new = sum(x[1] for x in _sum_acc)
+        _t_inv = sum(x[2] for x in _sum_acc)
+        _t_mv = sum(x[3] for x in _sum_acc)
+        _t_pnl = _t_mv - _t_inv
+        _pc = "var(--warn)" if _t_pnl >= 0 else "var(--buy)"
+        h.append('<tr class="sum"><td colspan="2">合计（%d 只）</td>'
+                 '<td class="num">%s</td><td class="num">%s</td>'
+                 '<td class="num">%s</td><td class="num">%s</td>'
+                 '<td class="num"><span style="color:%s">%s（%+.1f%%）</span></td></tr>'
+                 % (len(funds), money(_t_base), money(_t_new), money(_t_inv), money(_t_mv),
+                    _pc, money(_t_pnl), (_t_pnl / _t_inv * 100) if _t_inv else 0))
+    h.append('</tbody></table></div>')
+    h.append('<p class="note">小计的市值只累加<b>已有市值</b>的基金（带 * 表示该账户内尚有基金市值待补，'
+             '那一块没有计进小计与盈亏），所以有 * 的小计会偏离真实账户市值。</p>')
     # 本周买入的份额要等下一次净值确认才进快照，这一周内会出现「钱已出、份额未计」的假亏损
     _wk_in = [f for f in funds if (f.get("week") or 0) > 0]
     if _wk_in:
@@ -1159,6 +1383,14 @@ table,.acc,.cons>div{break-inside:avoid}
     initial_total = sum(f.get("invested", 0) for f in cfg["funds"])
     cur_svg = svg_cumulative(ledger, initial_total)
     h.append('<h2><span class="n">05</span>累计投入曲线</h2>')
+    h.append('<p class="note">这条曲线是<b>两个账户加总</b>后的现金投入（合计 %s），'
+             '不是任一账户的曲线：%s。两条进度差得远，合并成一条会掩盖差异，'
+             '各账户的起点与当前值见上面对照表。</p>'
+             % (money(agg_all["cum"]),
+                "、".join("%s已用 %.1f%%（%s / %s）"
+                         % (esc(a.get("name", "")), agg_map[a["id"]]["use"],
+                            wan(agg_map[a["id"]]["cum"]), wan(agg_map[a["id"]]["cap"]))
+                         for a in accounts)))
     if cur_svg:
         h.append('<p class="note">含启用本台账前的历史持仓基数 %s 元，之后按每周记录累加。'
                  '曲线突然变陡 = 某周发生了超常投入，值得回看当时的判断依据。</p>' % money(initial_total))
@@ -1236,14 +1468,29 @@ table,.acc,.cons>div{break-inside:avoid}
              '生成时间 %s · 单文件零依赖</footer>' % time.strftime("%Y-%m-%d %H:%M"))
 
     h.append('</div>')
-    # 主题切换：纯内联，无外部依赖；禁用 JS 时停在 HTML 上的 data-theme="night"
-    h.append('<script>(function(){var r=document.documentElement,'
+    # 主题切换 + 账户切换：纯内联，无外部依赖；禁用 JS 时停在服务端渲染的「合计」
+    h.append('<script>var DCA_KPI=%s;' % json.dumps(kpi_views, ensure_ascii=False))
+    h.append('(function(){var r=document.documentElement,'
              'b=[].slice.call(document.querySelectorAll(".themebar button"));'
              'function set(t){r.setAttribute("data-theme",t);'
              'b.forEach(function(x){x.className=(x.getAttribute("data-t")===t)?"on":""})}'
              'b.forEach(function(x){x.onclick=function(){set(x.getAttribute("data-t"));'
              'try{localStorage.setItem("dca-theme",x.getAttribute("data-t"))}catch(e){}}});'
              'try{var s=localStorage.getItem("dca-theme");if(s)set(s);else set("night")}catch(e){set("night")}'
+             '})();')
+    h.append('(function(){var seg=document.getElementById("accseg");if(!seg)return;'
+             'var bs=[].slice.call(seg.querySelectorAll("button"));'
+             'function apply(k){var d=DCA_KPI[k];if(!d)return;'
+             'var vs=document.querySelectorAll("[data-kv]"),i;'
+             'for(i=0;i<vs.length;i++){var x=d[vs[i].getAttribute("data-kv")];'
+             'if(x!==undefined)vs[i].textContent=x}'
+             'var hs=document.querySelectorAll("[data-kh]");'
+             'for(i=0;i<hs.length;i++){var y=d[hs[i].getAttribute("data-kh")];'
+             'if(y!==undefined)hs[i].textContent=y}'
+             'bs.forEach(function(b){b.className=(b.getAttribute("data-k")===k)?"on":""});'
+             'try{localStorage.setItem("dca-acc",k)}catch(e){}}'
+             'bs.forEach(function(b){b.onclick=function(){apply(b.getAttribute("data-k"))}});'
+             'try{var p=localStorage.getItem("dca-acc");if(p&&DCA_KPI[p])apply(p)}catch(e){}'
              '})();</script></body></html>')
     return "".join(h)
 
