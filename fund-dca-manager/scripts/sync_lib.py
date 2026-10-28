@@ -17,7 +17,7 @@ database_id 不写死在这里，从 dca_plan.json 的 library.databases.{accoun
 表结构（不要改字段名，改了本脚本要同步改）：
   「基金定投-账户」：账户ID 账户名称 总资金 周预算基准 周预算上限 说明
   「基金定投-持仓」：账户 代码 名称 当前市值 成本价 累计投入 份额 单期定投额
-                    周期周 平台策略 周投基准 额度上限 估值指数 指数偏差说明 手工分位 备注
+                    周期周 平台策略 周投基准 [额度上限·可选] 估值指数 指数偏差说明 手工分位 备注
 """
 import argparse
 import json
@@ -167,7 +167,10 @@ def main():
                 else:
                     same = (v or "") == (cur or "")
                 if not same:
-                    if k in ("当前市值", "累计投入", "单期定投额", "周投基准", "额度上限"):
+                    if k == "额度上限":
+                        # 可选字段：本地没设限额时要能「删掉」，所以显式传 null 清空
+                        props[k] = {"number": float(v)} if v is not None else {"number": None}
+                    elif k in ("当前市值", "累计投入", "单期定投额", "周投基准"):
                         props[k] = {"currency": float(v)} if v is not None else None
                     elif k in ("成本价", "份额", "周期周", "手工分位"):
                         props[k] = {"number": float(v)} if v is not None else None
@@ -238,10 +241,14 @@ def main():
                 f["invested_known"] = r["累计投入"]
             g = cfg.get(f["code"])
             if g is not None:
-                for k, src in [("base_weekly", "周投基准"), ("pool", "额度上限"),
-                               ("manual_percentile", "手工分位")]:
+                for k, src in [("base_weekly", "周投基准"), ("manual_percentile", "手工分位")]:
                     if src in r:
                         g[k] = r.get(src)
+                # 额度上限是可选字段：表里为空 = 未设单只限额，本地不要留 "pool": null
+                if r.get("额度上限") not in (None, ""):
+                    g["pool"] = r["额度上限"]
+                else:
+                    g.pop("pool", None)
                 if "估值指数" in r:
                     g["index_code"] = r.get("估值指数") or ""
                 if r.get("累计投入") is not None:

@@ -11,7 +11,7 @@
   · 统一排序依据 = 估值历史分位（PE 绝对值跨指数不可比）
   · 单只定「该不该加」（分位落档），账户定「能不能加」（预算优先分配）
   · 预算不足时按分位从低到高分配，最贵的先砍
-  · 每只基金有资金池与该档天花板，防单只超配
+  · 单只限额（pool）可选：不填即不设上限；填了才按 档位×cap_ratio 截断，防单只超配
 
 结果落盘：
   终端打印 + records/YYYY-MM-DD.md（快照）+ records/ledger.csv（台账，追加）
@@ -299,15 +299,21 @@ def main():
         want = round(base_w * tier["factor"]) if tier else 0
         want_raw = round(base_w * tier_raw["factor"]) if tier_raw else want
 
-        pool = fund.get("pool", 0)
-        ceiling = round(pool * tier["cap_ratio"]) if tier else 0
-        # new_sum = 台账新增累计（不含历史持仓）；invested = 历史持仓成本 + new_sum
+        # 单只限额 pool 可选：不填（None / 0）＝不设上限，本周额只受档位系数与账户预算约束。
+        # 用户提供的「金额」是当前市值（holdings.json），不是计划投入总额度，绝不能拿来当限额。
+        pool = fund.get("pool") or 0
         key = "%s|%s" % (fund["account"], fund["code"])
         new_sum = ledger_sum.get(key, 0)
         invested = fund.get("invested", 0) + new_sum
-        # 天花板管的是「新增额度」，不是「总持仓」——否则已重仓的老基金一进来就被判停投
-        room = max(0, ceiling - new_sum)
-        need = min(want, room) if pool else want
+        if pool:
+            # 天花板管的是「新增额度」，不是「总持仓」——否则已重仓的老基金一进来就被判停投
+            ceiling = round(pool * tier["cap_ratio"]) if tier else 0
+            room = max(0, ceiling - new_sum)
+            need = min(want, room)
+        else:
+            ceiling = None
+            room = None
+            need = want
 
         rows.append({
             "fund": fund, "eva": eva, "pct": pct, "tier": tier, "src": src,
@@ -361,7 +367,7 @@ def main():
             pad("PE", 8, "right") + pad("分位", 7, "right") + pad("PB分位", 7, "right") +
             pad("档", 6, "center") + pad("源", 5, "center") +
             pad("理论", 6, "right") + pad("本周投", 7, "right") +
-            pad("新增/额度", 15, "right"))
+            pad("新增累计", 12, "right"))
 
     grand = 0
     for acc in accounts:
@@ -378,9 +384,11 @@ def main():
 
         o()
         o("─" * 94)
-        o("【%s】%s   资金池 %s 元   周预算 %d（上限 %d）   本周已用 %d，结余 %d%s"
-          % (acc["id"], acc.get("name", ""),
-             "{:,}".format(acc.get("total_capital", 0)), base_b, cap_b,
+        # 不再显示「资金池」：用户给的金额是当前市值，没有设过单只限额
+        _npool = sum(1 for r in mine if r["fund"].get("pool"))
+        o("【%s】%s   周预算 %d（上限 %d）· %s   本周已用 %d，结余 %d%s"
+          % (acc["id"], acc.get("name", ""), base_b, cap_b,
+             ("单只限额 %d 只" % _npool) if _npool else "单只不设限额",
              used, cap_b - used,
              "（含上周已执行 %d，本次新增 %d）" % (used_done, used_new) if used_done else ""))
         o("─" * 94)
@@ -405,7 +413,7 @@ def main():
                 mark = "  ← 本周账户计划已冻结（本应 %d）" % r["need"]
             elif r["need"] > 0 and r["alloc"] < r["need"]:
                 mark = "  ← 预算不足，本应 %d" % r["need"]
-            elif r["want"] > 0 and r["need"] < r["want"]:
+            elif r.get("ceiling") is not None and r["want"] > 0 and r["need"] < r["want"]:
                 mark = "  ← 已达该档天花板 %d" % r["ceiling"]
             if r.get("tier_note"):
                 mark += "  ⚑ " + r["tier_note"]
@@ -414,7 +422,9 @@ def main():
               pad(lv, 6, "center") +
               pad(r.get("src", "-"), 5, "center") +
               pad(r["want"], 6, "right") + pad(r["alloc"], 7, "right") +
-              pad("%d/%d" % (round(r["new_sum"] + r["alloc"]), f.get("pool", 0)), 15, "right") + mark)
+              pad(("%d" % round(r["new_sum"] + r["alloc"])) if r.get("ceiling") is None
+                  else ("%d/%d" % (round(r["new_sum"] + r["alloc"]), f.get("pool", 0))),
+                  12, "right") + mark)
 
     o()
     o("=" * 94)
@@ -475,7 +485,7 @@ def main():
         o("⚠ 重复暴露：以下指数被多只基金跟踪，等于同一风险押两次：")
         for ic, v in dup.items():
             o("   %s → %s" % (ic, "、".join(x["fund"]["name"] for x in v)))
-        o("   建议只保留费率最低的一只，或把 pool 合计控制在单指数目标上限内。")
+        o("   建议只保留费率最低的一只；若决定都留着，可只给其中一只设 pool 上限。")
 
     stopped = [r for r in rows if r["tier"] and r["tier"]["factor"] == 0]
     if stopped:
@@ -563,7 +573,7 @@ def main():
             "src": r.get("src", "-"),
             "want": r["want"], "alloc": r["alloc"],
             "done": r.get("done", 0) or 0,
-            "ceiling": r["ceiling"], "pool": r["fund"].get("pool", 0),
+            "ceiling": r["ceiling"], "pool": r["fund"].get("pool") or None,
             "new_sum": round(r["new_sum"]), "invested": round(r["invested"]),
             "cum_total": round(r["cum_total"]),
             "new_total": round(r["cum_total"] - r["fund"].get("invested", 0)),

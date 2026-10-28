@@ -119,7 +119,7 @@ def next_triggers(pct, rules, base_w):
 
 
 def tier_action(factor, cap_ratio):
-    """由系数与资金池上限推出该档的动作含义，规则改了含义跟着变，不写死在表里。"""
+    """由系数与额度占用上限推出该档的动作含义，规则改了含义跟着变，不写死在表里。"""
     if factor <= 0:
         return "停投持有，额度收紧" if cap_ratio < 0.3 else "停投持有"
     if factor <= 0.5:
@@ -163,7 +163,7 @@ def tier_table(rules, funds=None):
         if i is not None:
             hits.setdefault(i, []).append(f.get("short") or f.get("name", ""))
     p = ['<table><thead><tr><th>档</th><th>分位区间</th><th class="num">系数</th>'
-         '<th class="num">资金池上限</th><th>动作</th><th>本周落此档</th></tr></thead><tbody>']
+         '<th class="num">额度占用上限</th><th>动作</th><th>本周落此档</th></tr></thead><tbody>']
     for i, r in enumerate(rules):
         f = r["factor"]
         factor_txt = "停投" if f <= 0 else "%.1f×" % f
@@ -392,7 +392,8 @@ def assess(funds, hold, accounts, rules):
         if factor is None:
             factor = t["factor"] if t else 0
         bw = f.get("base_w") or 0
-        room = max(0, (f.get("pool") or 0) - (f.get("new") or 0))
+        room = (max(0, (f.get("pool") or 0) - (f.get("new") or 0))
+                if f.get("pool") else None)
         if r["ok"]:
             r["weight"] = r["amount"] / acct_mv.get(f["account"], 1) * 100
         if not r["ok"]:
@@ -417,9 +418,12 @@ def assess(funds, hold, accounts, rules):
         elif factor >= 1.0:
             if r["weight"] < 5:
                 r["dg"], r["dgt"] = "good", "低估轻仓"
-                r["advice"] = ("钱该来这里：分位 %.1f%% 但只占 %.1f%%，额度还剩 %s；"
+                r["advice"] = ("钱该来这里：分位 %.1f%% 但只占 %.1f%%%s；"
                                "要加只能提 base（现 %d 元/周）" %
-                               (pct, r["weight"], money(room), bw))
+                               (pct, r["weight"],
+                                "，单只额度还剩 %s" % money(room) if room is not None
+                                else "，未设单只限额",
+                                bw))
             else:
                 r["dg"], r["dgt"] = "good", "低估重仓"
                 r["advice"] = "维持现额；占比已达 %.1f%%，不再提高单一权重" % r["weight"]
@@ -476,8 +480,11 @@ def assess(funds, hold, accounts, rules):
     h.append('<p class="note">口径：市值与成本价取 <b>%s</b>（净值日 %s），分位与档位取本周快照。'
              '判断只用两个可复算的量——<b>仓位权重</b>与<b>估值分位</b>；主题归类来自基金名称与'
              '合同业绩基准，<b>不做持仓穿透</b>，所以「同质化」只能算到指数层面。'
-             '下面每条建议都带了数字或触发条件，不写「建议关注」这类无法验证的话。</p>'
-             % (esc(hold["file"]), esc(hold["nav_date"] or "-")))
+             '下面每条建议都带了数字或触发条件，不写「建议关注」这类无法验证的话。'
+             '<b>本节合计只含能算出盈亏的 %d 只</b>（缺市值或缺成本价的 %d 只不计入，'
+             '它们的成本仍算进 KPI 的累计投入，所以两处数字会有差额）。</p>'
+             % (esc(hold["file"]), esc(hold["nav_date"] or "-"),
+                len(live), len(funds) - len(live)))
 
     # ---- 三条结论 ----
     h.append('<div class="cons">')
@@ -558,11 +565,10 @@ def assess(funds, hold, accounts, rules):
                    "不动预算，只改配置口径"))
     if raise_base:
         a_rows.append(("给低估的加 base",
-                       "%s 分位 %.1f%%、权重 %.1f%%：base %d → %d，周投 %s → %s（额度还剩 %s）"
+                       "%s 分位 %.1f%%、权重 %.1f%%：base %d → %d，周投 %s → %s"
                        % (raise_base["f"]["name"][:10], raise_base["f"]["pct"], raise_base["weight"],
                           raise_base["f"]["base_w"], raise_base["f"]["base_w"] * 2,
-                          money(raise_base["f"]["week"]), money(raise_base["f"]["week"] * 2),
-                          money(max(0, (raise_base["f"]["pool"] or 0) - (raise_base["f"]["new"] or 0)))),
+                          money(raise_base["f"]["week"]), money(raise_base["f"]["week"] * 2)),
                        "不涉及"))
     if len(idle) > 1:
         b_acct = idle[1]
@@ -660,7 +666,7 @@ def build(cfg, ledger, weeks, snap=None, hold=None):
             "pe": pe, "pct": pct, "tier": tier_lv, "src": src, "proxy": proxy,
             "pb_pct": pb_pct, "tier_raw": tier_raw, "tier_note": tier_note,
             "factor": (s or {}).get("factor") if s else None,
-            "week": week_v, "cum": cum_v, "pool": f.get("pool", 0) or 1,
+            "week": week_v, "cum": cum_v, "pool": f.get("pool") or None,
             "base_inv": bi, "new": new_v,
             "base_w": f.get("base_weekly", 0),
         })
@@ -668,6 +674,8 @@ def build(cfg, ledger, weeks, snap=None, hold=None):
     week_total = sum(f["week"] for f in funds)
     cum_total = sum(f["cum"] for f in funds)
     use_rate = cum_total / total_cap * 100 if total_cap else 0
+    # 当前市值只取持仓快照的真实数字，不叠加任何估算额度
+    mv_now = sum((v.get("amount") or 0) for v in ((hold or {}).get("funds") or {}).values())
     pcts = [f["pct"] for f in funds if f["pct"] is not None]
     avg_pct = sum(pcts) / len(pcts) if pcts else 0
 
@@ -681,7 +689,7 @@ def build(cfg, ledger, weeks, snap=None, hold=None):
     for ic, names in seen_idx.items():
         if len(names) > 1:
             alerts.append(("重复暴露", "%s 被 %d 只基金跟踪：%s" % (ic, len(names), "、".join(names)),
-                           "同一风险押两次，建议合并或把 pool 合计控在单指数上限内"))
+                           "同一风险押两次，建议合并；若都留着，可只给其中一只设 pool 上限"))
     for f in funds:
         if f["pct"] is None:
             alerts.append(("无估值分位", f["name"] + " 未取到对应指数估值",
@@ -690,7 +698,7 @@ def build(cfg, ledger, weeks, snap=None, hold=None):
         _fac_al = f.get("factor")
         if f["pct"] is not None and _fac_al is not None and _fac_al <= 0:
             alerts.append(("停投", f["name"] + " 分位 %.1f%%" % f["pct"], "高于停投线，只持有不再买入"))
-        if f["new"] / f["pool"] > 0.9:
+        if f.get("pool") and f["new"] / f["pool"] > 0.9:
             alerts.append(("新增额度将尽", f["name"] + " 已用 %.0f%%" % (f["new"] / f["pool"] * 100),
                            "该基金在本账户的加仓额度快用完，下档需等估值下移"))
 
@@ -842,7 +850,7 @@ table,.acc,.cons>div{break-inside:avoid}
     h.append('<header><div class="kicker">定投执行台账 · DCA Ledger</div>')
     h.append('<h1 class="serif">多账户基金定投 · 执行记录</h1>')
     h.append('<p class="sub">PE 分位定档、PB 分位做 ±1 档校验；账户内按分位优先分配预算，'
-             '每只设资金池天花板防止低位超配</p>')
+             '单只不设限额（配置里填 pool 才启用天花板）</p>')
     # 三个日期必须分开写：记录日是本周已执行的那天，数据日是估值快照日，
     # 出具日是这一版页面的生成日——规则改动当天重渲染时前两者不变、只有它变
     h.append('<div class="meta"><span>出具日 %s</span><span>记录日 %s</span><span>数据日 %s</span>'
@@ -855,9 +863,14 @@ table,.acc,.cons>div{break-inside:avoid}
     # KPI
     h.append('<div class="kpis">')
     h.append('<div class="kpi"><div class="l">本周投入</div><div class="v">%s</div><div class="h">本周记录合计</div></div>' % money(week_total))
-    h.append('<div class="kpi"><div class="l">累计投入</div><div class="v">%s</div><div class="h">含台账全部记录</div></div>' % money(cum_total))
-    h.append('<div class="kpi"><div class="l">资金使用率</div><div class="v">%.1f%%</div><div class="h">累计 / 总资金 %s</div></div>'
-             % (use_rate, money(total_cap)))
+    h.append('<div class="kpi"><div class="l">累计投入</div><div class="v">%s</div>'
+             '<div class="h">历史成本 + 台账新增（%d 只全口径）</div></div>'
+             % (money(cum_total), len(funds)))
+    h.append('<div class="kpi"><div class="l">当前市值</div><div class="v">%s</div>'
+             '<div class="h">%s</div></div>'
+             % (money(mv_now) if mv_now else "—",
+                "持仓快照日 %s" % esc((hold or {}).get("nav_date") or "-")
+                if mv_now else "未接入持仓快照"))
     h.append('<div class="kpi"><div class="l">平均估值分位</div><div class="v">%.1f%%</div><div class="h">%d 只基金简单平均</div></div>'
              % (avg_pct, len(pcts)))
     h.append('</div>')
@@ -873,8 +886,9 @@ table,.acc,.cons>div{break-inside:avoid}
         base = a.get("weekly_budget_base") or 0
         ratio = min(100, used / cap * 100) if cap else 0
         h.append('<div class="acc"><div class="acc__h"><span class="acc__t">%s · %s</span>'
-                 '<span class="acc__m">资金池 %s · 周预算 %d（上限 %d）</span></div>'
-                 % (esc(a["id"]), esc(a.get("name", "")), money(a.get("total_capital", 0)), base, cap))
+                 '<span class="acc__m">周预算 %d（上限 %d）· %s</span></div>'
+                 % (esc(a["id"]), esc(a.get("name", "")), base, cap,
+                    "单只限额未设" if not any(f.get("pool") for f in af) else "部分单只设了限额"))
         h.append('<div class="bar buy"><i style="width:%.1f%%"></i></div>' % ratio)
         h.append('<div class="acc__m">本周已用 <b>%s</b> 元 · 结余 %s 元</div>'
                  % (money(used), money(cap - used)))
@@ -882,7 +896,7 @@ table,.acc,.cons>div{break-inside:avoid}
             h.append('<table><thead><tr><th>基金</th><th class="num">PE</th><th class="num">分位</th>'
                      '<th class="num">PB分位</th>'
                      '<th>档</th><th>数据源</th><th class="num">本周投</th>'
-                     '<th class="num">新增/额度</th></tr></thead><tbody>')
+                     '<th class="num">新增累计</th></tr></thead><tbody>')
             for f in sorted(af, key=lambda x: (x["pct"] if x["pct"] is not None else 999)):
                 src = f.get("src") or "-"
                 pbp = ("%.1f%%" % f["pb_pct"]) if f.get("pb_pct") is not None else "-"
@@ -892,14 +906,15 @@ table,.acc,.cons>div{break-inside:avoid}
                 h.append('<tr><td>%s%s</td><td class="num">%s</td><td class="num">%s</td>'
                          '<td class="num">%s</td>'
                          '<td><span class="tier t-%s">%s</span></td><td class="src">%s</td>'
-                         '<td class="num">%s</td><td class="num">%s/%s</td></tr>'
+                         '<td class="num">%s</td><td class="num">%s</td></tr>'
                          % (esc(f["name"]),
                             ('<div class="src">%s</div>' % esc(f["tier_note"]))
                             if f.get("tier_note") else "",
                             "%.2f" % f["pe"] if f["pe"] else "-",
                             "%.1f%%" % f["pct"] if f["pct"] is not None else "-", pbp,
                             esc(f["tier"]), tier_cell, esc(src), money(f["week"]),
-                            money(f["new"]), money(f["pool"])))
+                            money(f["new"]) +
+                            (" / " + money(f["pool"]) if f.get("pool") else "")))
             h.append('</tbody></table>')
         else:
             h.append('<div class="acc__m">该账户暂无基金</div>')
@@ -924,9 +939,10 @@ table,.acc,.cons>div{break-inside:avoid}
         # 档位说明：只给徽标不给换算，读者无法自己复核金额
         h.append('<h3>档位怎么换算成周投额</h3>')
         h.append('<p class="note">档位由当前分位唯一决定，周投额 = 该基金的 <b>base_weekly</b> × 档位系数。'
-                 'base_weekly 是「B 档时每周投多少」，由资金池 ÷ 计划投入周数定，所以<b>同为 B 档的两只基金，'
-                 '绝对金额并不可比</b>。资金池上限是该档最多能动用本基金池子的比例，分位越低允许动用的越多，'
-                 '这是「越跌越有钱买」的机制来源。</p>')
+                 'base_weekly 是「B 档时每周投多少」，取自你平台侧的定投额（双周投按 ÷2 折算），'
+                 '所以<b>同为 B 档的两只基金，绝对金额并不可比</b>。'
+                 '「额度占用上限」是可选约束：本账户<b>没有给任何一只设单只限额</b>，'
+                 '这一列当前不生效，周投额只由档位系数与账户预算决定。</p>')
         h.append(tier_table(rules, funds))
 
         # 双锚校验：说明「为什么不能只看 PE 分位」
@@ -980,7 +996,7 @@ table,.acc,.cons>div{break-inside:avoid}
             note.append('<b>%s 分了两段</b>：同一徽标下系数不同，所以两只都显示 %s 的基金，'
                         '周投额可以差一倍以上，要看分位具体落在哪一段。'
                         % ("、".join(split), split[0]))
-        note.append('这张表的分档阈值、系数、资金池上限都可以改（配置里的 <b>tier_rules</b>），'
+        note.append('这张表的分档阈值、系数、额度占用上限都可以改（配置里的 <b>tier_rules</b>），'
                     '改完重跑，表格与分配金额会一起同步，不存在「文档写一套、脚本算一套」。')
         for n_ in note:
             h.append('<p class="note">· %s</p>' % n_)
@@ -1001,20 +1017,36 @@ table,.acc,.cons>div{break-inside:avoid}
                             esc(used), esc(px.get("note", ""))))
             h.append('</tbody></table>')
 
-    # 04 持仓与天花板
-    h.append('<h2><span class="n">04</span>持仓与新增额度使用</h2>')
-    h.append('<p class="note">「历史持仓」是启用台账之前的存量成本，不占新增额度；'
-             '「新增/额度」逼近 100% 说明这只基金在本账户的加仓弹药快用完，下档要靠估值下移才会打开。</p>')
-    h.append('<table><thead><tr><th>基金</th><th class="num">历史持仓</th><th class="num">新增累计</th>'
-             '<th class="num">新增额度</th><th>已用率</th><th class="num">剩余</th></tr></thead><tbody>')
-    for f in sorted(funds, key=lambda x: -x["new"]):
-        r = f["new"] / f["pool"] * 100
-        color = "var(--warn)" if r > 85 else ("var(--amber)" if r > 60 else "var(--buy)")
-        h.append('<tr><td>%s</td><td class="num">%s</td><td class="num">%s</td><td class="num">%s</td>'
-                 '<td><span class="mini"><i style="width:%.0f%%;background:%s"></i></span> <span class="num">%.0f%%</span></td>'
-                 '<td class="num">%s</td></tr>'
-                 % (esc(f["name"]), money(f["base_inv"]), money(f["new"]), money(f["pool"]),
-                    min(100, r), color, r, money(max(0, f["pool"] - f["new"]))))
+    # 04 持仓与投入结构
+    # 原来这节是「新增额度使用率」，但用户从未设过单只限额（给的金额是当前市值），
+    # 额度列全是脚本按 base×156 估出来的虚构值，已改为真实的三段结构：历史成本 / 台账新增 / 市值。
+    h.append('<h2><span class="n">04</span>持仓与投入结构</h2>')
+    h.append('<p class="note">「历史持仓」是启用台账之前的存量成本，「台账新增」是此后按周记录的投入，'
+             '两者相加等于累计投入；「当前市值」取持仓快照，差额就是浮动盈亏。'
+             '<b>本账户没有给任何一只基金设单只限额</b>，所以这里不显示额度占用——'
+             '周投额只由档位系数与账户预算决定。</p>')
+    hm = (hold or {}).get("funds") or {}
+    h.append('<table><thead><tr><th>基金</th><th class="num">历史持仓</th><th class="num">台账新增</th>'
+             '<th class="num">累计投入</th><th class="num">当前市值</th><th class="num">浮动盈亏</th>'
+             '</tr></thead><tbody>')
+    for f in sorted(funds, key=lambda x: -(x["new"] + (x.get("base_inv") or 0))):
+        hh = hm.get(f["code"]) or {}
+        amt = hh.get("amount")
+        inv = (f.get("base_inv") or 0) + (f.get("new") or 0)
+        if amt:
+            pnl = amt - inv
+            # 与 02 节同口径：A 股红涨绿跌，盈利走 warn（红）、亏损走 buy（绿）
+            pc = "var(--warn)" if pnl >= 0 else "var(--buy)"
+            pnl_cell = '<span class="num" style="color:%s">%s（%+.1f%%）</span>' % (
+                pc, money(pnl), (amt / inv - 1) * 100 if inv else 0)
+            mv_cell = money(amt)
+        else:
+            pnl_cell = '<span class="src">市值待补</span>'
+            mv_cell = "—"
+        h.append('<tr><td>%s</td><td class="num">%s</td><td class="num">%s</td>'
+                 '<td class="num">%s</td><td class="num">%s</td><td class="num">%s</td></tr>'
+                 % (esc(f["name"]), money(f.get("base_inv") or 0), money(f.get("new") or 0),
+                    money(inv), mv_cell, pnl_cell))
     h.append('</tbody></table>')
 
     # 05 累计曲线
