@@ -274,12 +274,25 @@ def h_link(r):
     return '<a class="lk" href="%s" target="_blank" rel="noopener">原文</a>' % escape(r['url'])
 
 
-def op_badge_html(op, held=False):
+def op_badge_html(op, held=False, pos=None):
     """观察池持仓徽标：manifest positions 中的标的固定标「持仓中」（tooltip 带摘要）；
-    非持仓标的保留报告「操作」字段的压缩文案口径（如贵州茅台的「持有中」）。"""
+    非持仓标的保留报告「操作」字段的压缩文案口径（如贵州茅台的「持有中」）。
+
+    held 时 tooltip **由 positions 现算**（股数 / 成本 / 策略），不再读报告里的 op 字段——
+    op 是报告写作时的历史口径，减仓或改成本后不会自动更新，曾出现「5500股·成本4.45」
+    与台账「2500股·成本4.28」并存的分叉。"""
     o = (op or '').strip()
     if held:
-        tip = o if o else '持仓中'
+        if pos:
+            sh = pos.get('shares')
+            st = (pos.get('strategy') or '').strip()
+            if pos.get('cost') is not None:
+                core = '%s股 · 成本%g' % (sh, pos['cost'])
+            else:
+                core = '%s股 · %s' % (sh, (pos.get('cost_label') or '—').replace('\u00a0', ' '))
+            tip = core + ('（%s）' % st if st else '')
+        else:
+            tip = o if o else '持仓中'
         return '<span class="opb" title="%s">持仓中</span>' % escape(tip, quote=True)
     if not o:
         return ''
@@ -324,7 +337,7 @@ def row_html(r, idx):
                % escape(al_txt, quote=True)) if al_txt else ''
     op = r.get('op') or ''
     op_attr = ' title="%s"' % escape(op, quote=True) if op else ''
-    op_badge = op_badge_html(op, bool(r.get('_held')))
+    op_badge = op_badge_html(op, bool(r.get('_held')), r.get('_pos'))
     return (
         '<tr%s %s><td class="idx n"></td>'
         '<td class="nm"><b>%s</b><span class="cd">%s</span></td>'
@@ -368,7 +381,7 @@ def card_html(r):
                % escape(al_txt)) if al_txt else ''
     fresh_cls = ' is-fresh' if r.get('fresh') else ''
     op = r.get('op') or ''
-    op_badge = op_badge_html(op, bool(r.get('_held')))
+    op_badge = op_badge_html(op, bool(r.get('_held')), r.get('_pos'))
     return (
         '<article class="zcard%s" %s>'
         '<div class="zcard__top"><span class="zcard__idx n"></span>'
@@ -607,9 +620,23 @@ def positions_html(positions, rows_by_code):
     rows_by_code = rows_by_code or {}
     total_mv = 0.0
     total_cost = 0.0
+    neg_mv = 0.0          # 无 cost（负成本 / 利润仓）标的的市值合计，单独披露
     n_cost = 0
     items = []
     cards = []
+
+    def _mv_key(p):
+        """持仓卡排序键：市值降序。现价缺失时退化为股数×成本，再退化为 0。
+        代码内排序而非依赖 manifest 手写顺序——否则股数一改（如 808→100 股）顺序就错。"""
+        r = rows_by_code.get(p['code']) or {}
+        px_s = r.get('px_n') or r.get('px') or ''
+        try:
+            px = float(px_s) if px_s else float(p.get('cost') or 0.0)
+        except (TypeError, ValueError):
+            px = 0.0
+        return -(float(p.get('shares') or 0) * px)
+
+    positions = sorted(positions, key=_mv_key)
     for p in positions:
         r = rows_by_code.get(p['code']) or {}
         px_s = r.get('px_n') or r.get('px') or ''
@@ -636,7 +663,13 @@ def positions_html(positions, rows_by_code):
             pl_txt = '<span class="%s n">%+.1f%%</span>' % (cls, plp)
         else:
             cost_html = p.get('cost_label') or '—'
-            pl_txt = '<span class="dim">%s</span>' % escape(p.get('cost_label') or '—')
+            # 无成本基准（负成本 / 纯利润仓）时「浮动盈亏」列没有可算的百分比，
+            # 允许用 pl_label 覆盖该列文案，避免与「成本」列显示同一串造成误读。
+            pl_txt = '<span class="dim">%s</span>' % escape(
+                p.get('pl_label') or p.get('cost_label') or '—')
+            # 无成本基准的标的（负成本摊薄 / 纯利润仓）不参与「在管成本」，
+            # 但其市值会进入总市值与总浮动盈亏 → 必须单独披露，否则汇总口径被隐性放大。
+            neg_mv += mv
         px_html = ('<span data-f="px" data-fb="">%s</span>'
                    ' <span class="pos__chg">今日 %s%%</span>' % (escape(str(px_s)), escape(str(chg)))
                    ) if px_s and chg != '' else ('<span data-f="px" data-fb="">%s</span>' % escape(str(px_s))
@@ -653,10 +686,12 @@ def positions_html(positions, rows_by_code):
             '<tr><td class="pos__trg">%s</td><td>%s</td></tr>' % (escape(t), escape(d))
             for t, d in (p.get('plan') or []))
         note = p.get('note') or ''
+        # 未记录建仓日时不要渲染「… 建仓」，避免出现只有「建仓」二字的空壳
+        opened_txt = ('<span class="pos__open">%s 建仓</span>' % escape(p['opened'])) if p.get('opened') else ''
         cards.append(
             '<article class="pos-card" id="pos-%s">'
             '<div class="pos-card__top"><div class="pos-card__id"><b>%s</b><span class="cd">%s</span></div>'
-            '<span class="posv">%s</span><span class="pos__open">%s 建仓</span></div>'
+            '<span class="posv">%s</span>%s</div>'
             '<div class="pos-card__kv">'
             '<div><dt>持仓 / 计划</dt><dd class="n">%s</dd></div>'
             '<div><dt>成本</dt><dd class="n">%s</dd></div>'
@@ -669,7 +704,7 @@ def positions_html(positions, rows_by_code):
             '<a class="lk" href="%s" target="_blank" rel="noopener">观察池报告原文 →</a>'
             '</article>'
             % (escape(p['code']), escape(p['name']), escape(p['code']), escape(p.get('strategy', '')),
-               escape(p.get('opened') or ''), shares_txt, cost_html, px_html, mv, cur,
+               opened_txt, shares_txt, cost_html, px_html, mv, cur,
                pl_html, escape(note), plans,
                escape((r or {}).get('url') or '#')))
     ov_rows = ''.join(
@@ -692,15 +727,22 @@ def positions_html(positions, rows_by_code):
                '<tbody>%s</tbody></table></div>' % ov_rows)
     sum_pl = total_mv - total_cost
     cost_scope = '、'.join(it['name'] for it in items if it['pl_txt'].startswith('<span class="is-'))
+    pl_lbl = '浮动盈亏（对在管成本）'
+    pl_note = ''
+    if neg_mv > 0:
+        pl_lbl = '浮动盈亏（含利润仓市值）'
+        pl_note = (' <span class="dim" data-f="sum-plnote">'
+                   '（负成本仓 %.0f 元全额计入）</span>' % neg_mv)
     sum_html = ('<div class="pos-sum"><div><dt>持仓标的</dt><dd class="n">%d 只</dd></div>'
                 '<div><dt>总市值</dt><dd class="n" data-f="sum-mv">%.0f 元</dd></div>'
                 '<div><dt>在管成本（%s）</dt><dd class="n">%.0f 元</dd></div>'
-                '<div><dt>浮动盈亏（对在管成本）</dt><dd class="n %s" data-f="sum-pl">%+.0f 元</dd></div>'
-                '<div><dt>利润仓</dt><dd>%s</dd></div></div>'
+                '<div><dt>%s</dt><dd class="n %s" data-f="sum-pl">%+.0f 元%s</dd></div>'
+                '<div><dt>利润仓（负成本）</dt><dd data-f="sum-profit">%s</dd></div></div>'
                 % (len(positions), total_mv,
                    escape(cost_scope or '—'), total_cost,
-                   'is-up' if sum_pl >= 0 else 'is-down', sum_pl,
-                   ' · '.join(it['name'] + ' ' + it['cost_html'] for it in items if not it['pl_txt'].startswith('<span class="is-')) or '—'))
+                   pl_lbl, 'is-up' if sum_pl >= 0 else 'is-down', sum_pl, pl_note,
+                   ' · '.join('%s %.0f %s' % (it['name'], it['mv'], it['cur']) for it in items
+                              if not it['pl_txt'].startswith('<span class="is-')) or '—'))
     return ov_html + sum_html + ''.join(cards)
 
 
@@ -728,6 +770,7 @@ def main():
     rows = [enrich(r) for r in json.load(io.open(a.data, encoding='utf-8'))]
     for r in rows:
         r['_held'] = r['code'] in held
+        r['_pos'] = held.get(r['code'])
     rows_by_code = {r['code']: r for r in rows}
 
     # 全局排序：有量化期望价的在前，按潜在空间降序；无期望价的按报告日降序垫底。
@@ -788,6 +831,7 @@ def main():
                   'p': r.get('px_n') or r.get('px') or '', 'w': r['win_v'],
                   'g': r['gap'], 'u': r['up'], 'z': r['zone']} for r in rows],
         'pos': {p['code']: {'s': p.get('shares', 0), 'c': p.get('cost'),
+                            'n': p.get('name', ''),
                             'cur': (rows_by_code.get(p['code']) or {}).get('cur', '元'),
                             'px0': _f((rows_by_code.get(p['code']) or {}).get('px_n'))}
                 for p in positions},
@@ -1866,7 +1910,7 @@ var WL_MODEL = @@PX_MODEL@@;</script>
 
   /* ── 持仓 Tab ─────────────────────────────────────────────────── */
   function patchPositions(){
-    var totalMv = 0, totalCost = 0, anyCost = false, k, p, q, px, mv, pl, plp, el, row;
+    var totalMv = 0, totalCost = 0, negMv = 0, anyCost = false, negList = [], k, p, q, px, mv, pl, plp, el, row;
     for(k in M.pos){
       if(!M.pos.hasOwnProperty(k)) continue;
       p = M.pos[k]; q = PX[k] || {px:p.px0 || 0, str:'—', chg:null};
@@ -1876,6 +1920,7 @@ var WL_MODEL = @@PX_MODEL@@;</script>
       totalMv += mv;
       var want = (p.c !== null && p.c !== undefined);
       if(want){ totalCost += p.c * p.s; anyCost = true; }
+      else { negMv += mv; negList.push({t:(p.n || k), mv:mv, cur:(p.cur || '元')}); }
       var scopes = [];
       row = q1('.pos-ov__row[data-code="' + k + '"]');
       if(row) scopes.push(row);
@@ -1915,8 +1960,22 @@ var WL_MODEL = @@PX_MODEL@@;</script>
     el = q1('[data-f="sum-pl"]');
     if(el && anyCost){
       var spl = totalMv - totalCost;
+      // 说明节点会被下面的 textContent 清掉 → 先留引用、写完再挂回去
+      var noteEl = el.querySelector('[data-f="sum-plnote"]');
       el.className = 'n ' + (spl >= 0 ? 'is-up' : 'is-down');
       el.textContent = signN(Math.round(spl), 0) + ' 元';
+      if(noteEl){
+        noteEl.textContent = '（负成本仓 ' + Math.round(negMv) + ' 元全额计入）';
+        el.appendChild(noteEl);
+      }
+    }
+    // 利润仓市值随刷新重算；排序按市值降序，与静态渲染口径一致
+    el = q1('[data-f="sum-profit"]');
+    if(el){
+      negList.sort(function(a, b){ return b.mv - a.mv; });
+      el.textContent = negList.length
+        ? negList.map(function(x){ return x.t + ' ' + Math.round(x.mv) + ' ' + x.cur; }).join(' · ')
+        : '—';
     }
   }
 
