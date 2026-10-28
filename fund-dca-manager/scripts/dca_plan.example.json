@@ -165,6 +165,20 @@
       "shares": 21702.4,
       "base_weekly": 300,
       "note": "示例：行业占净值 ≥50% 按行业立口径，禁用宽基；手工分位必须带 asof，超 manual_pct_stale_days 告警"
+    },
+    {
+      "code": "001410",
+      "name": "信澳新能源产业股票A",
+      "account": "A",
+      "index_code": "",
+      "no_tier": true,
+      "invested": 247,
+      "shares": 38.9,
+      "base_weekly": 40,
+      "index_proxy": {
+        "actual": "沪深300×85% + 上证国债×15%（合同基准）",
+        "note": "示例：不定档。前十大仅占净值 19.96%（且清一色半导体/PCB），剩余 80% 不可见，无法合成估值序列；名「新能源」实持半导体，与基准也无对应。no_tier=true 让脚本输出「主动不定档」而非「缺数据」，档位显示 ?。"
+      }
     }
   ]
 }

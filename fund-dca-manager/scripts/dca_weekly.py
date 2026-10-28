@@ -474,7 +474,10 @@ def main():
         for i, r in enumerate(mine, 1):
             f, e, t = r["fund"], r["eva"], r["tier"]
             idx_name = (e["name"] if e else "-")[:6]
-            pe = ("%.2f" % e["pe"]) if e and e.get("pe") else "-"
+            # src=手工 时分位来自自建组合（如光伏、半导体持仓加权），PE 却来自 index_code 接口，
+            # 两者不同源；并列会让人以为「PE 27.65 对应 47.2% 分位」。宁可留空，用 note 标手工。
+            _manual = r.get("src") == "手工"
+            pe = ("%.2f" % e["pe"]) if (e and e.get("pe") and not _manual) else "-"
             pct = ("%.1f%%" % r["pct"]) if r["pct"] is not None else "-"
             pbp = ("%.1f%%" % r["pb_pct"]) if r.get("pb_pct") is not None else "-"
             lv = t["level"] if t else "?"
@@ -482,6 +485,10 @@ def main():
                 lv = "%s←%s" % (t["level"], r["tier_raw"]["level"])
             chg = r.get("change", "")
             note = "重开" if f.get("reopen") else ""
+            if _manual:
+                note = (note + " 手工") if note else "手工"
+            if f.get("no_tier"):
+                note = (note + " 不定档") if note else "不定档"
             if r.get("tier_note"):
                 note = (note + " ⚑") if note else "⚑"
             if show_amounts:
@@ -554,7 +561,7 @@ def main():
     o("档位图例（分位→档位；系数只在 --amounts 模式下折算金额）：")
     for i in range(0, len(parts), 4):
         o("   " + "   ".join(parts[i:i + 4]))
-    o("   「?」= 无分位数据，不代表不该买，只是无法用分位定档。")
+    o("   「?」= 无档位（主动不定档，或无该指数数据），本周不分配，不代表不该买。")
     o("   「重开」= 该只此前已清仓、近期重新开仓，成本基准从重开日算起。")
     o("   只给档位、不给金额：投多少、投不投由你自己决定；档位变化会单独列出。")
     if pbc.get("enabled", True):
@@ -592,14 +599,26 @@ def main():
     proxied = [r for r in rows if r["fund"].get("index_proxy")]
     if proxied:
         o()
-        o("代理指数（该基金无对应指数估值，用下列指数代替，分位可信度打折）：")
+        o("指数口径说明（分位不是按合同基准算的，或基准本身无法取数）：")
         for r in proxied:
             px = r["fund"]["index_proxy"]
-            o("   %s ← %s → %s  %s"
-              % (r["fund"]["name"][:14], px.get("actual", "?"),
-                 r["fund"]["index_code"], px.get("note", "")))
+            tag = "［手工分位］" if r.get("src") == "手工" else ""
+            ic = r["fund"].get("index_code") or "（不定档，不取数）"
+            o("   %s %s← %s → %s  %s"
+              % (r["fund"]["name"][:14], tag, px.get("actual", "?"),
+                 ic, px.get("note", "")))
 
-    nodata = [r["fund"]["name"] for r in rows if r["pct"] is None]
+    # 「主动不定档」与「缺数据」是两件事：前者是做过判断后决定不测（持仓不可见 / 基准失真），
+    # 后者是没测出来。混在一起会让人以为该去补数据，实则补了也没有可信口径。
+    skipped = [r["fund"]["name"] for r in rows
+               if r["pct"] is None and r["fund"].get("no_tier")]
+    nodata = [r["fund"]["name"] for r in rows
+              if r["pct"] is None and not r["fund"].get("no_tier")]
+    if skipped:
+        o()
+        o("· 主动不定档（本周不分配，档位留 ?）：%s" % "、".join(skipped))
+        o("   原因见配置里各自的 index_proxy.note：多为前十大覆盖率不足或合同基准失真，"
+          "硬套一个指数比不定档更危险。周投额按自己的判断走。")
     if nodata:
         o()
         o("⚠ 无估值分位（本周不分配，不代表不该买）：%s" % "、".join(nodata))
@@ -690,6 +709,7 @@ def main():
             "change_dir": r.get("change_dir", 0),
             "reopen": r["fund"].get("reopen"),
             "src": r.get("src", "-"),
+            "no_tier": bool(r["fund"].get("no_tier")),
             "want": r["want"], "alloc": r["alloc"],
             "done": r.get("done", 0) or 0,
             "ceiling": r["ceiling"], "pool": r["fund"].get("pool") or None,
