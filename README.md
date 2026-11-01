@@ -57,12 +57,13 @@ python screen.py --type value,dividend   # 只跑指定类型
 - **核心文件**：
   - `SKILL.md` — 10 步流水线 + Phase 0–11（**Phase 0a 历史报告检索与评估模式确认** / Phase 0b 口径确认 / **Phase 9.5 报告内容回查** / **Phase 11 观察池台账 + 上传后旧版归档**）
   - `assets/report_template.html` — 生产级 11 节报告模板
-  - `assets/verify_report.py` — **报告回查脚本**，自动核验标签配平、版本号、计数、折现/期望价/门槛算术、**三情景股息项**、**跨标的模板污染**、**结论数字跨位置同值**等 24 项
+  - `assets/verify_report.py` — **报告回查脚本**，自动核验标签配平、版本号、计数、折现/期望价/门槛算术、**三情景股息项**、**跨标的模板污染**、**结论数字跨位置同值**等 30 项
   - `assets/lib_reports.py` — **资料库历史报告检索 / 全量盘查 / 旧版归档**（`scan` 按标的检索历史版本，给出 `NO_HISTORY` / `HISTORY_FOUND` / `MULTI_VERSION`；`audit` 全量盘查，一次列出所有「多版本并存」组与重复标题，给出 `CLEAN` / `NEEDS_ACTION`；`archive` 幂等移入「旧版归档」）
+  - `assets/peer_attribution.py` — **同业归因核查**（第 5 步行业横向前必跑）：`python assets/peer_attribution.py 300558 688578`，一次输出单季拆解（营收/归母/扣非，转亏自动标注）/ 三口径利润与非经常性损益 / 主营构成（判「有没有这个靶点的产品」是否等于「是不是赛道代理」）/ 经营评述中「减值·剔除」原文 / 自动判读提示。**防的是「对手失血」被误读成「赛道失速」**——这类错误数字全真、结论方向反，对持仓含义相反（详见 redlines 第 61–66 条）
   - `assets/watchlist/build_watchlist.py` / `render_watchlist.py` — **观察池台账**（Phase 11）：按 manifest 从各报告抽结论字段建 `ledger_final.json`，再渲成自包含 HTML「决策驾驶舱」（可操作性分区 / 与上期比对的变化高亮 / 复核时间轴 / 三档配色）。`overrides.alert` 可给单只标的挂一条**报告出具后的行情更新**琥珀条（典型：跌破报告自己写死的退出价位）：默认**只提示不改数**；经确认后也可把 `px` 一并覆盖为当日收盘、**维护为最新价**（潜在空间与距买点随新价重算，期望价/胜率/判定/报告日期仍保持报告原值）
   - `assets/watchlist/check_ledger_gap.py` — **台账的 audit**（台账漏更新的机器兜底）：把「本地根目录报告代码集」与「实测库端台账 `data-k` 代码集」做差集，输出 `MISSING`（有报告无行）/ `STALE`（台账胜率 ≠ 报告胜率，该行数值停在旧版）/ `EXTRA`，末行给 `LEDGER_GAP_RESULT: CLEAN|NEEDS_ACTION`；`--pull` 先拉最新库端台账。**每轮报告交付收尾必跑，`NEEDS_ACTION` 时不许报完成**。`STALE` 只认胜率——胜率随模型修订变、不随股价变，潜在空间会被「全池换价」按当日收盘重算，拿它判会全表误报
   - `references/methodology.md` — 方法论全文结构速查
-  - `references/redlines.md` — 43 条红线 / 26 个陷阱 / 38 项自检
+  - `references/redlines.md` — 66 条红线 / 49 个陷阱 / 79 项自检
   - `references/data_pipeline.md` — 实测可用的数据管线接口
   - `references/color_conventions.md` — 配色与结构约定
 - **依赖**：数据检索能力；回查脚本需 Python 3
@@ -74,6 +75,9 @@ python assets/lib_reports.py scan --manifest <工作目录>/watchlist_manifest.j
 
 # 全量盘查：一次列出库里所有「同标的多版本并存」与重复标题
 python assets/lib_reports.py audit --manifest <工作目录>/watchlist_manifest.json
+
+# 行业横向之前：核查同业是不是「赛道代理」（三口径利润 / 单季拆解 / 主营构成）
+python assets/peer_attribution.py 300558 688578
 
 # 报告生成后回查（交付前必跑）
 python assets/verify_report.py "<报告.html>" --skill-dir <stock-analyzer 目录>
