@@ -21,6 +21,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{TOPIC}} · 十步学习法</title>
+<script>document.documentElement.className+=' js';</script>
 <style>
 /* ============================================================
    十步学习法 · 主题化样式
@@ -189,6 +190,13 @@ body{
 .view{display:none; animation:fade .35s ease}
 .view.active{display:block}
 @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+/* 无 JS 兜底：脚本被禁用/拦截时，左侧目录用原生锚点 + :target 仍能切视图。
+   没有这条时，<a href="#view-3"> 会跳到 display:none 的节点上，表现就是「点了没反应」。 */
+html:not(.js) .view{display:none}
+html:not(.js) .view:target{display:block}
+html:not(.js) #view-intro{display:block}
+html:not(.js) body:has(.view:target) #view-intro{display:none}
 
 /* ---- 主题切换按钮 ---- */
 .theme-btn{
@@ -591,39 +599,71 @@ html[data-theme="light"] .theme-btn__ico--moon{display:block}
 
 <script>
 (function(){
-  var nav=document.getElementById('nav');
-  var links=[].slice.call(document.querySelectorAll('[data-view]'));
   var views=[].slice.call(document.querySelectorAll('.view'));
   var sidebar=document.getElementById('sidebar');
+  var menuBtn=document.getElementById('menuBtn');
   function show(id){
+    if(!id||!document.getElementById(id)) return;
     views.forEach(function(v){v.classList.toggle('active', v.id===id);});
-    document.querySelectorAll('#nav a').forEach(function(a){a.classList.toggle('active', a.dataset.view===id);});
-    if(window.innerWidth<=900) sidebar.classList.remove('open');
-    window.scrollTo({top:0,behavior:'auto'});
-  }
-  links.forEach(function(a){
-    a.addEventListener('click',function(e){
-      var id=a.dataset.view; if(!id) return;
-      e.preventDefault(); history.replaceState(null,'','#'+id); show(id);
+    [].slice.call(document.querySelectorAll('#nav a')).forEach(function(a){
+      a.classList.toggle('active', a.getAttribute('data-view')===id);
     });
+    if(sidebar&&window.innerWidth<=900) sidebar.classList.remove('open');
+    // 切视图必须瞬时回顶：页面全局开着 scroll-behavior:smooth，
+    // 若不临时关掉，从长页面深处点目录会先换内容、再慢慢滑上去，看着像「没反应」
+    try{
+      var de=document.documentElement, prev=de.style.scrollBehavior;
+      de.style.scrollBehavior='auto';
+      window.scrollTo(0,0);
+      de.style.scrollBehavior=prev;
+    }catch(e){}
+  }
+  // 关键：先切视图，地址栏同步只是「尽力而为」。
+  // 沙箱 iframe / 内嵌预览 / 非 http(s) 协议下 history.replaceState 会抛 SecurityError，
+  // 绝不能让它阻断跳转（原实现把 replaceState 放在 show 之前，一抛错就点了没反应）。
+  function go(id){
+    show(id);
+    try{history.replaceState(null,'','#'+id);}
+    catch(e1){
+      try{location.hash=id;}catch(e2){}
+    }
+  }
+  // 事件委托：左侧目录、正文 CTA、十步地图卡片走同一条路径
+  document.addEventListener('click',function(e){
+    var el=e.target;
+    while(el&&el!==document){
+      if(el.getAttribute&&el.getAttribute('data-view')) break;
+      el=el.parentNode;
+    }
+    if(!el||el===document) return;
+    var id=el.getAttribute('data-view'); if(!id) return;
+    if(e.button&&e.button!==0) return;
+    e.preventDefault(); go(id);
+  },false);
+  if(menuBtn&&sidebar) menuBtn.addEventListener('click',function(){sidebar.classList.toggle('open');});
+  // 浏览器前进 / 后退、手动改地址栏
+  window.addEventListener('hashchange',function(){
+    var id=(location.hash||'').replace(/^#/,'');
+    if(id&&document.getElementById(id)) show(id);
   });
-  document.getElementById('menuBtn').addEventListener('click',function(){sidebar.classList.toggle('open');});
   // 主题：默认深色；切换后记忆，恢复时以记忆为准
   var html=document.documentElement, tbtn=document.getElementById('themeBtn');
   function applyTheme(t){
     html.setAttribute('data-theme',t);
+    if(!tbtn) return;
+    var txt=tbtn.querySelector('.theme-btn__txt');
     var toLight=(t==='dark');
-    tbtn.querySelector('.theme-btn__txt').textContent=toLight?'浅色':'深色';
+    if(txt) txt.textContent=toLight?'浅色':'深色';
     tbtn.setAttribute('aria-label',toLight?'切换到浅色主题':'切换到深色主题');
     try{localStorage.setItem('tsl-theme',t);}catch(e){}
   }
   var saved=null; try{saved=localStorage.getItem('tsl-theme');}catch(e){}
   applyTheme(saved==='light'?'light':'dark');
-  tbtn.addEventListener('click',function(){
+  if(tbtn) tbtn.addEventListener('click',function(){
     applyTheme(html.getAttribute('data-theme')==='dark'?'light':'dark');
   });
-  var start=(location.hash||'#view-intro').slice(1);
-  if(document.getElementById(start)) show(start); else show('view-intro');
+  var start=(location.hash||'#view-intro').replace(/^#/,'');
+  show(document.getElementById(start)?start:'view-intro');
 })();
 </script>
 </body>
