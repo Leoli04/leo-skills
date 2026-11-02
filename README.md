@@ -150,6 +150,35 @@ python scripts/publish_dca.py
 
 > 台账按 ISO 周去重，同一周内重复运行不会重复记账。`actual` 列可手工改成实际成交额，下次运行按它累加。
 
+### 📚 ten-step-learning
+
+把一个陌生主题学到「能与专业人士对谈」，产出**单文件离线学习 HTML**（12 个视图：总览 + 十步 + 收尾闭环）。
+
+- **方法论**：五视角 STORM（多视角取证 → 矛盾图谱 → 综合简报 → 同行评审）之后进入 学习阶梯 → 核心 20% → 题库自测 → 费曼循环 → 一页速查表。**灵魂是逐环交接**：前一步的产物就是后一步的输入，严禁跳序、严禁凭空生成
+- **触发词**：「帮我系统学一下 X」「用十步学习法过一遍 X」「把 X 学到能跟人聊」「给我做份学习资料」
+- **输入** = 一个主题；开场只问两个快问（当前水平+目标深度、角色/使用场景），之后全自动、零打断
+- **输出** = `<主题>-十步学习.html`，单文件、零 CDN、零外链、零 fetch，断网双击即完整渲染
+- **默认深色**：右上角按钮切浅色（localStorage 记忆）。配色走语义令牌层（`--canvas` / `--surface` / `--text` / `--accent` / `--rail-*` / `--viz-*`），深浅两套共用同一套组件规则，加主题只改变量块
+- **不手工拼 HTML**：模板有 66 个占位符，手填必漏，而漏填的表现是页面某块**静默空白**、不报错。所以内容与外壳分离：先写 `data.json`，再由 `render.py` 校验 → 单遍替换 → 残留/结构/配色自检 → 幂等写出
+- **核心文件**：
+  - `SKILL.md` — 五阶段流程、三栏语义（输入=提示词 / 输出=原始产物 / 学习结果=提炼结论）、交付前自检
+  - `assets/template.html` — 12 视图外壳：侧栏导航 + 组件类 + 主题令牌 + SVG 图形类
+  - `assets/fonts-inline.css` — Fraunces + Inter latin 子集 base64（151 KB），保住标题衬线观感，**仍是纯离线**（来源与 OFL 许可见 `assets/FONTS.md`）
+  - `scripts/render.py` — 渲染器（纯标准库）：键名拼错直接报错、深色主题壳完好性检查、可视化里写死 `#hex` 直接拦下
+  - `scripts/fetch-fonts.mjs` — 重做内联字体（需联网一次，`--force` 覆盖）
+  - `references/ten-step-prompts.md` — 十步逐字提示词（含每步「消费哪些上游」与「该提炼什么」）
+  - `references/template-guide.md` — 占位符清单 + 组件类写法 + SVG 实测坐标与配色类
+- **依赖**：Python 3 标准库；仅重做字体时需要 Node.js
+- **联网**：第 1 步（多视角取证）、第 5 步（资源筛选）需要真实检索；有 `web-access` 就用它，否则用环境内置 WebSearch/WebFetch，**两者都没有时必须显式标注「未联网核实」，不许编造来源与资源**
+
+```bash
+# 1. 只校验（缺键 / 拼错 / 残留 / 配色问题一次报全，不写文件）
+python scripts/render.py --data data.json --check
+
+# 2. 渲染（--fonts 注入内联字体；不写则回退系统字体）
+python scripts/render.py --data data.json --fonts
+```
+
 ## 使用方式
 
 将本仓库克隆后，把对应 skill 目录放入 CodeBuddy 的 skills 目录（`.codebuddy/skills/`），即可通过自然语言触发。
@@ -205,6 +234,11 @@ leo-skills/
 │   ├── SKILL.md
 │   ├── references/        # 档位系数 / 止盈规则 / 多账户
 │   └── scripts/           # 周度执行表 / HTML 台账 / 资料库发布
+├── ten-step-learning/     # 十步学习法：主题 → 单文件学习 HTML
+│   ├── SKILL.md
+│   ├── assets/            # HTML 外壳模板 + 内联字体
+│   ├── references/        # 十步提示词 / 模板填充规范
+│   └── scripts/           # 渲染器 / 字体抓取
 ├── youtube-downloader/    # YouTube 下载技能
 │   ├── SKILL.md
 │   ├── README_zh.md
