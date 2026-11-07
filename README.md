@@ -161,6 +161,65 @@ python scripts/publish_dca.py
 
 > 台账按 ISO 周去重，同一周内重复运行不会重复记账。`actual` 列可手工改成实际成交额，下次运行按它累加。
 
+### 📚 ten-step-learning
+
+把一个陌生主题学到「能与专业人士对谈」，产出**单文件离线学习 HTML**（12 个视图：总览 + 十步 + 收尾闭环）。
+
+- **方法论**：五视角 STORM（多视角取证 → 矛盾图谱 → 综合简报 → 同行评审）之后进入 学习阶梯 → 核心 20% → 题库自测 → 费曼循环 → 一页速查表。**灵魂是逐环交接**：前一步的产物就是后一步的输入，严禁跳序、严禁凭空生成
+- **触发词**：「帮我系统学一下 X」「用十步学习法过一遍 X」「把 X 学到能跟人聊」「给我做份学习资料」
+- **输入** = 一个主题；开场只问两个快问（当前水平+目标深度、角色/使用场景），之后全自动、零打断
+- **输出** = `<主题>-十步学习.html`，单文件、零 CDN、零外链、零 fetch，断网双击即完整渲染
+- **默认深色**：右上角按钮切浅色（localStorage 记忆）。配色走语义令牌层（`--canvas` / `--surface` / `--text` / `--accent` / `--rail-*` / `--viz-*`），深浅两套共用同一套组件规则，加主题只改变量块
+- **不手工拼 HTML**：模板有 66 个占位符，手填必漏，而漏填的表现是页面某块**静默空白**、不报错。所以内容与外壳分离：先写 `data.json`，再由 `render.py` 校验 → 单遍替换 → 残留/结构/配色自检 → 幂等写出
+- **核心文件**：
+  - `SKILL.md` — 五阶段流程、三栏语义（输入=提示词 / 输出=原始产物 / 学习结果=提炼结论）、交付前自检
+  - `assets/template.html` — 12 视图外壳：侧栏导航 + 组件类 + 主题令牌 + SVG 图形类
+  - `assets/fonts-inline.css` — Fraunces + Inter latin 子集 base64（151 KB），保住标题衬线观感，**仍是纯离线**（来源与 OFL 许可见 `assets/FONTS.md`）
+  - `scripts/render.py` — 渲染器（纯标准库）：键名拼错直接报错、深色主题壳完好性检查、可视化里写死 `#hex` 直接拦下
+  - `scripts/fetch-fonts.mjs` — 重做内联字体（需联网一次，`--force` 覆盖）
+  - `references/ten-step-prompts.md` — 十步逐字提示词（含每步「消费哪些上游」与「该提炼什么」）
+  - `references/template-guide.md` — 占位符清单 + 组件类写法 + SVG 实测坐标与配色类
+- **依赖**：Python 3 标准库；仅重做字体时需要 Node.js
+- **联网**：第 1 步（多视角取证）、第 5 步（资源筛选）需要真实检索；有 `web-access` 就用它，否则用环境内置 WebSearch/WebFetch，**两者都没有时必须显式标注「未联网核实」，不许编造来源与资源**
+
+```bash
+# 1. 只校验（缺键 / 拼错 / 残留 / 配色问题一次报全，不写文件）
+python scripts/render.py --data data.json --check
+
+# 2. 渲染（--fonts 注入内联字体；不写则回退系统字体）
+python scripts/render.py --data data.json --fonts
+```
+
+### 🎧 podcast-learning-notes
+
+把一期播客（音频 / 小宇宙单集页 / 已有文字稿）整理成「约 1/4 时长能读完」的忠实学习笔记。
+
+- **双模型分工**：转写只管音频 → 文字稿（本地 FunASR 或通义/飞书等云 ASR），写笔记只管文字稿 → 笔记。`source/transcript.md` 已存在就复用，改风格、加内容不重跑转写
+- **七道工序**：全文清洗 → 问题骨架 + 切块 → 逐块精读 → 排记录稿 → 三轮审校 → 成稿收口 → 复盘。每道有判据，不靠「感觉差不多了」
+- **记录与成稿分开**（本 skill 的核心设计）：`notes.draft.md` 只求不漏、保留全部 `[mm:ss]`；`notes.md` 只做好读，锚点全删并另存 `notes.带时间锚点-溯源版.md`。在同一遍里又加又减，是反复改稿的根因
+- **审校分三轮**：结构 / 逻辑保真 / 文字，每轮只看一件事。含限定词抽查（随机 10 处回对干净稿）与归属三分（嘉宾原话 / 主持人引导 / 我的推论）
+- **成稿先定体量档位**：速读 3000–4000 / 标准 5000–6500 / 完整 8000–10000 汉字；偏离 20% 必须写明原因
+- **核心文件**：
+  - `SKILL.md` — 七阶段流程、各阶段判据与已踩过的坑
+  - `references/note-template.md` — 成稿结构、取舍规则、段落颗粒度、小标题节奏、自检清单
+  - `references/review-and-retrospective.md` — 三轮审校表、失败项、修复记录格式
+  - `references/ai-term-corrections.md` — AI 专名同音误转写对照表（这类错误句意通顺，只能主动排查）
+  - `references/xiaoyuzhou-source.md` — 小宇宙单集页解析
+  - `references/funasr-local.md` / `references/cloud-asr.md` — 两种转写方案与取舍
+  - `scripts/download_xiaoyuzhou_episode.py` — 抓音频与 show notes
+  - `scripts/transcribe_funasr.py` / `transcribe_cloud_asr.py` — 转写与结果规范化
+- **依赖**：Python 3 标准库（云转写走 REST，无需 SDK）；本地 FunASR 需另装 funasr / torch
+- **联网**：抓小宇宙页面、云转写需要联网；本地 FunASR 可离线
+
+```bash
+# 小宇宙单集页 → 音频 + show notes
+python scripts/download_xiaoyuzhou_episode.py <episode-url> \
+    --audio-out source/audio.m4a --notes-out source/show-notes.md
+
+# 云端已导出的转写结果 → 统一为 source/transcript.md
+python scripts/transcribe_cloud_asr.py normalize --provider tongyi --input-json raw.json
+```
+
 ## 使用方式
 
 将本仓库克隆后，把对应 skill 目录放入 CodeBuddy 的 skills 目录（`.codebuddy/skills/`），即可通过自然语言触发。
@@ -216,6 +275,15 @@ leo-skills/
 │   ├── SKILL.md
 │   ├── references/        # 档位系数 / 止盈规则 / 多账户
 │   └── scripts/           # 周度执行表 / HTML 台账 / 资料库发布
+├── ten-step-learning/     # 十步学习法：主题 → 单文件学习 HTML
+│   ├── SKILL.md
+│   ├── assets/            # HTML 外壳模板 + 内联字体
+│   ├── references/        # 十步提示词 / 模板填充规范
+│   └── scripts/           # 渲染器 / 字体抓取
+├── podcast-learning-notes__skillhub/  # 播客 → 学习笔记（转写 + 七阶段收口）
+│   ├── SKILL.md
+│   ├── references/        # 笔记模板 / 三轮审校 / 专名纠错 / 转写方案
+│   └── scripts/           # 小宇宙抓取 / 本地与云转写
 ├── youtube-downloader/    # YouTube 下载技能
 │   ├── SKILL.md
 │   ├── README_zh.md
