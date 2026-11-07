@@ -1,6 +1,37 @@
 # Phase 11 台账 · 操作细则
 
-> 配套 `SKILL.md` 的 Phase 11。SKILL.md 里保留触发时机、四步流程命令块与交付前自检；**本文件是 overrides 纪律、归并口径、目录约定、上传后归档步骤与脚本踩坑固化**。以下情况必读本文件：① 填写 / 更新 overrides；② 归并时节点匹配有歧义；③ 上传新版后有旧版要归档；④ 要改 `assets/watchlist/` 下任何脚本。
+> 配套 `SKILL.md` 的 Phase 11。SKILL.md 里保留触发时机、四步流程命令块与交付前自检；**本文件是 overrides 纪律、归并口径、目录约定、上传后归档步骤与脚本踩坑固化**。以下情况必读本文件：① 填写 / 更新 overrides；② 归并时节点匹配有歧义；③ 上传新版后有旧版要归档；④ 要改 `assets/watchlist/` 下任何脚本；⑤ 改完台账要验收（第一节「骨架体检」）。
+
+## 改台账后必跑：骨架体检（2026-11-07 立）
+
+**只验行内容不够。** `check_ledger_gap.py` 能证明「该有的标的都有行、胜率不是旧值」，但它对**行之外的东西完全无感** —— 智能页面运行时、数据表绑定、＋加行增强层、持仓 Tab 都可以整块消失，而 gap 照样 `CLEAN`。
+
+```bash
+python <skill>/assets/watchlist/check_ledger_skeleton.py --html <台账.html> --stage upload
+# 改完发现页面不对：跟上一版对差，直接列出丢了哪几条
+python <skill>/assets/watchlist/check_ledger_skeleton.py --html <新版.html> --diff <上一版.html>
+```
+
+| 时机 | 命令 | 期望 |
+|---|---|---|
+| 刚 `render_watchlist.py` 出来 | `--stage render`（默认） | `OK`，smart 组允许告警 |
+| 补完增强层 / Tab，准备上传 | `--stage upload` | `OK`，fail 0 |
+| 改完心里没底 | 加 `--diff <上一版>` | 输出「相对基准消失的结构标记」 |
+
+**渲染器不产出、每次整页重建必然丢的四样**（这就是「＋又丢了」的机制）：
+
+| 丢什么 | 特征 | 后果 | 补法 |
+|---|---|---|---|
+| 智能页面运行时 | `<script src="/page/page_comm/inject.js">` | 平台不认这是智能页面，块编辑与数据表联动全废 | 平台注入；本地文件里没有是正常的，**回拉的库端件必须有** |
+| 数据表绑定 | `#posSrc` + `data-sp-bindable` + `data-sp-database-id` | 加行写不进表 | 补 `<span class="pos-src" data-sp-bindable="database" data-sp-database-id="<库ID>" id="posSrc">` |
+| ＋加行增强层 | `.padd-mini`（CSS）+ `posMask` / `addRecord` / `fetchAll`（JS） | 点「＋」无反应，或表单能填但存不进 | 见下方「增强层移植」 |
+| 持仓与计划 Tab | `#view-pos` + `data-v="pos"` + `<h2>持仓与后期计划` | 持仓整块消失 | **别整页覆盖上传**，走库端行级补丁 |
+
+**判据为什么按「CSS 里有没有 / JS 里有没有」拆，而不数次数**：`padd-mini` 在合格件里只出现 6 次（CSS 5 次样式定义 + 1 次 `b.className='padd-mini'`），因为它是一个类名和一次赋值，不是每行一个按钮。拿它跟观察池只数对账会得出「6 ≠ 104 所以坏了」的假结论。真正会半残的形态是**样式在、注入逻辑没了**（按钮永远不生成，页面看不出异常），所以 `padd_css` / `padd_js` 必须分开判。
+
+**增强层移植**（`<skill>/assets/watchlist/` 里没有，属一次性补丁）：从上一份含增强层的产物里取三块 —— 增强 CSS（从起点注释到 `<style>` 末尾）、`#posSrc` 徽标、增强脚本块（含 `padd-mini` / `posMask` 的那个 `<script>`），分别落到 `</head>` 前、原 `panel__d` 之后、`</body>` 前。定位 CSS 用**选择器差集法**：两版 `<style>` 按「选择器 → 规则」求集合差，缺失规则会连续落在同一段 offset 区间（11-07 实测 77 条全部落在 28440..35621，CSS 共 35622），比肉眼翻 3 万字符快得多。**补完必须跑 mock 全链路**：有 N 只观察池就应有 N 个「＋」，点开预填正确，保存后 `addRecord` 真被调用且写入类型化（`{"select":…}` / `{"number":…}` / `{"text":…}`）。
+
+**根治方向（未做）**：`render_watchlist.py` 里这四样一处都没有，只要用它重建就必然复现。彻底修法是把增强层做成渲染器的模板常量；在那之前，本体检脚本就是唯一防线。
 
 ## 持仓与计划 Tab（2026-10-16 起，render 自动生成）
 
