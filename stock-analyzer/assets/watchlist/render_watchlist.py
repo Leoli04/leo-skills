@@ -746,6 +746,64 @@ def positions_html(positions, rows_by_code):
     return ov_html + sum_html + ''.join(cards)
 
 
+# ══ 交互增强层（2026-11-07 起由渲染器自带，不再依赖事后补丁）══════════════
+#  本渲染器只产出「观察池 + 静态持仓快照」一层。另外三样一直靠事后 patch 补：
+#    · 智能页面注入（inject.js / data-page-node-id / pnid 注释）—— 平台侧负责
+#    · 数据表绑定（#posSrc + data-sp-bindable）—— 让平台认出这块连了表
+#    · 「＋」加行与持仓编辑（padd-mini / posMask / addRecord / fetchAll）
+#  每次整页重建覆盖上传都会吃掉后两样，而 check_ledger_gap.py 只查行级内容，
+#  对「页面看起来正常、点＋没反应」完全无感。现在把 CSS / 标记 / 脚本固化成
+#  enhance/ 下的文件，渲染时自动拼进去，重建不再丢。
+HERE = os.path.dirname(os.path.abspath(__file__))
+ENH_DIR = os.path.join(HERE, 'enhance')
+DEFAULT_DB_ID = 'LmhN0eFhk6hgXCjbOcSlaz'        # 「投资观察池台账」数据表
+# 增强标记挂在持仓面板的这句副标题之后 —— 与历史版本位置一致
+POS_SRC_ANCHOR = ('<span class="panel__d">实际持仓口径 · 现价与观察池行情联动 · '
+                  '计划为既定纪律非即时建议</span>')
+
+
+def load_enhancement():
+    """读 enhance/ 下三块。缺一即中止：宁可渲染失败，也不要静默产出点不动的页面。"""
+    parts = {}
+    for key, name in (('css', 'enh.css'), ('js', 'enh.js'), ('pos_src', 'pos_src.html')):
+        p = os.path.join(ENH_DIR, name)
+        if not os.path.isfile(p):
+            raise SystemExit('! 缺增强层文件 %s\n  台账会丢掉「＋」加行 / 持仓编辑能力，补齐后再渲染。'
+                             % p)
+        parts[key] = io.open(p, encoding='utf-8').read()
+    return parts
+
+
+def inject_enhancement(html, parts, db_id):
+    """把增强层三块拼进页面，每处锚点断言命中 1 次。已注入则跳过（幂等）。"""
+    if 'id="enh-style"' in html:
+        print('enhancement: 已存在，跳过注入')
+        return html, False
+    css = parts['css'].replace('@@ENH_DB_ID@@', db_id)
+    js = parts['js'].replace('@@ENH_DB_ID@@', db_id)
+    pos_src = parts['pos_src'].replace('@@ENH_DB_ID@@', db_id)
+
+    def _one(hay, needle, what):
+        c = hay.count(needle)
+        if c != 1:
+            raise SystemExit('! 增强层注入锚点「%s」命中 %d 次（应为 1）——'
+                             '模板结构已变，先核对再改注入位置。' % (what, c))
+        return c
+
+    _one(html, '</head>', '</head>')
+    _one(html, POS_SRC_ANCHOR, '持仓面板副标题')
+    _one(html, '</body>', '</body>')
+
+    html = html.replace('</head>',
+                        '<style id="enh-style">\n' + css + '</style>\n</head>', 1)
+    html = html.replace(POS_SRC_ANCHOR, POS_SRC_ANCHOR + pos_src, 1)
+    html = html.replace('</body>',
+                        '<script id="enh-script">' + js + '</script>\n</body>', 1)
+    print('enhancement: css %d + pos_src %d + js %d chars'
+          % (len(css), len(pos_src), len(js)))
+    return html, True
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--data', required=True)
@@ -758,6 +816,11 @@ def main():
     ap.add_argument('--px-asof', default='')
     # 持仓数据源：manifest 顶层 positions 段；缺省自动探测脚本同目录的 watchlist_manifest.json
     ap.add_argument('--manifest', default='')
+    # 数据表 id：写进 #posSrc 与增强脚本，决定「＋」加到哪张表
+    ap.add_argument('--database-id', default=DEFAULT_DB_ID)
+    # 只在「本地预览、确定不上传」时才关；上传版必须带增强层
+    ap.add_argument('--no-enhance', action='store_true',
+                    help='跳过交互增强层注入（仅本地预览用，上传版绝不可用）')
     a = ap.parse_args()
 
     man = {}
@@ -882,6 +945,11 @@ def main():
         html = html.replace(k, v)
     # @@WIN_TH@@ 位于模块级 THEAD 常量内，随 @@ZONES@@ 一起进入页面，需再补一次替换
     html = html.replace('@@WIN_TH@@', repl['@@WIN_TH@@'])
+
+    if a.no_enhance:
+        print('enhancement: 已按 --no-enhance 跳过 —— 此文件不可上传')
+    else:
+        html, _ = inject_enhancement(html, load_enhancement(), a.database_id)
 
     io.open(a.out, 'w', encoding='utf-8').write(html)
     print('written %s | %d bytes | %d rows' % (a.out, len(html), n))

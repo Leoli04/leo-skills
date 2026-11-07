@@ -1,0 +1,105 @@
+
+/* ===== 台账交互增强层（从 2026-10-24 版移植，2026-11-07 恢复） =====
+   观察池「＋」→ 加入持仓计划；持仓面板由数据表渲染并支持编辑 / 删除。
+   与页面既有 .plan-* 静态快照样式并存：连表时 panel__body 由脚本接管。 */
+/* ＋持仓 */
+.padd-mini{appearance:none;border:1px dashed var(--line);background:var(--surface);color:var(--ink-400);
+  font:700 12px/1 var(--font);width:19px;height:19px;padding:0;border-radius:4px;cursor:pointer;flex:none;
+  display:inline-flex;align-items:center;justify-content:center;transition:.15s}
+.padd-mini:hover{border-style:solid;border-color:var(--brand);background:var(--brand-soft);color:var(--brand)}
+.padd-mini:disabled{opacity:.45;cursor:default}
+.zcard__top .padd-mini{margin-left:auto}
+td.c-lk .padd-mini{display:block;margin:4px auto 0}
+/* 持仓：状态徽标与操作条 */
+.pos-st{font-size:10.5px;font-weight:700;border-radius:var(--rp);padding:1px 7px;white-space:nowrap}
+.pos-st--hold{background:var(--brand-soft);color:var(--brand)}
+.pos-st--plan{background:var(--surface-3);color:var(--ink-500)}
+.pos-acts{display:flex;gap:8px;align-items:center;margin-top:var(--s3);flex-wrap:wrap}
+.pos-acts .lk{margin-right:auto}
+.pbtn{appearance:none;border:1px solid var(--line);background:var(--surface);color:var(--ink-500);
+  font:600 var(--fs-xs)/1 var(--font);padding:6px 12px;border-radius:var(--rp);cursor:pointer;
+  transition:.15s}
+.pbtn:hover{border-color:var(--brand);color:var(--brand)}
+.pbtn--d:hover{border-color:var(--ink-400);color:var(--ink-900)}
+.pbtn--p{background:var(--brand-fill);border-color:var(--brand-fill);color:var(--on-brand)}
+.pbtn--p:hover{color:var(--on-brand);opacity:.9}
+.pos-note-tip{font-size:var(--fs-xs);color:var(--ink-500);line-height:1.75;padding:10px 12px;
+  margin-bottom:var(--s4);background:var(--brand-soft);border:1px solid var(--brand);
+  border-radius:var(--r1)}
+/* 持仓编辑表单 */
+.pos-mask{position:fixed;inset:0;background:rgba(15,23,42,.46);z-index:80;display:flex;
+  align-items:flex-start;justify-content:center;padding:36px 16px;overflow:auto}
+.pos-mask[hidden]{display:none}
+.pos-fm{background:var(--surface);border:1px solid var(--line);border-radius:var(--r3);
+  width:min(760px,100%);box-shadow:0 20px 52px rgba(15,23,42,.32);padding:var(--s5)}
+.pos-fm__h{display:flex;align-items:center;gap:var(--s3);margin:0 0 var(--s4)}
+.pos-fm__h h3{margin:0;font-size:var(--fs-lg);color:var(--ink-900)}
+.pos-fm__h .cd{font:600 11px var(--mono);color:var(--ink-400)}
+.pos-fm__x{margin-left:auto;appearance:none;border:none;background:transparent;color:var(--ink-400);
+  font-size:20px;line-height:1;cursor:pointer;padding:2px 6px;border-radius:4px}
+.pos-fm__x:hover{background:var(--surface-2);color:var(--ink-900)}
+.pos-fm__f{display:flex;gap:8px;align-items:center;margin-top:var(--s5)}
+.pos-fm__f .grow{flex:1}
+.pos-fm__err{color:var(--brand);font-size:var(--fs-xs);min-height:15px}
+/* 轻提示 */
+.wlnote{position:fixed;left:50%;bottom:28px;transform:translate(-50%,14px);z-index:90;
+  background:var(--ink-900);color:var(--surface);font-size:var(--fs-sm);font-weight:600;
+  padding:10px 18px;border-radius:999px;opacity:0;pointer-events:none;transition:.22s;
+  box-shadow:0 10px 28px rgba(0,0,0,.28);max-width:80vw;text-align:center}
+.wlnote.on{opacity:1;transform:translate(-50%,0)}
+/* 持仓区数据源状态（文本由数据表派生） */
+.pos-src{font-size:var(--fs-xs);font-weight:700;color:var(--brand);background:var(--brand-soft);
+  border-radius:var(--rp);padding:2px 9px;white-space:nowrap}
+/* 行内操作按钮（概览表 / 卡片通用） */
+.pbtn--xs{padding:4px 9px;font-size:10.5px;line-height:1.2}
+.pbtn--armed{border-color:var(--brand-fill);background:var(--brand-fill);color:var(--on-brand)}
+.pbtn--armed:hover{color:var(--on-brand);border-color:var(--brand-fill);opacity:.92}
+.pos-ov__ops{white-space:nowrap;text-align:right}
+.pos-ov__ops .pbtn{margin-left:6px}
+
+/* 持仓表单栅格 */
+.pfg{display:grid;grid-template-columns:repeat(2,1fr);gap:var(--s3) var(--s4)}
+.pfg label{display:flex;flex-direction:column;gap:5px;font-size:var(--fs-xs);color:var(--ink-500)}
+.pfg label.w2{grid-column:1/-1}
+.pfg input,.pfg select,.pfg textarea{border:1px solid var(--line);border-radius:var(--r1);
+  background:var(--surface);color:var(--ink-900);font:500 var(--fs-sm)/1.5 var(--font);padding:7px 10px}
+.pfg input:focus,.pfg select:focus,.pfg textarea:focus{outline:none;border-color:var(--brand)}
+.pfg textarea{min-height:104px;resize:vertical;font-family:var(--mono);font-size:var(--fs-xs);line-height:1.7}
+@media(max-width:900px){.pfg{grid-template-columns:1fr}.pfg label.w2{grid-column:auto}}
+.pos__empty{color:var(--ink-400);font-size:var(--fs-sm);text-align:center;padding:14px 0}
+
+
+/* ── 计划阶梯四列表（2026-10-24）───────────────────────────────── */
+.pos__plan--grid{table-layout:fixed}
+.pos__plan--grid th{font-size:10.5px;font-weight:700;color:var(--ink-400);text-align:left;
+  padding:6px 10px;border-bottom:1px solid var(--line-2);white-space:nowrap}
+.pos__plan--grid th:nth-child(1){width:22%}
+.pos__plan--grid th:nth-child(2){width:14%}
+.pos__plan--grid th:nth-child(3){width:26%}
+.pos__plan--grid th:nth-child(4){width:38%}
+.pos__plan--grid .pos__px{font-family:var(--mono);font-weight:700;color:var(--ink-900);white-space:nowrap}
+.pos__plan--grid .pos__qty{white-space:normal}
+.pos__plan--grid .pos__memo{color:var(--ink-500);font-size:11.5px}
+.pln-tag{display:inline-block;padding:1px 7px;border-radius:9px;font-size:10.5px;
+  font-weight:700;white-space:nowrap;border:1px solid transparent}
+.pln-tag--buy{background:rgba(47,95,208,.10);border-color:rgba(47,95,208,.30);color:#3d6fd8}
+.pln-tag--sell{background:rgba(217,119,6,.10);border-color:rgba(217,119,6,.30);color:#b45309}
+.pln-tag--stop{background:rgba(220,38,38,.10);border-color:rgba(220,38,38,.30);color:#b91c1c}
+.pln-tag--wait{background:rgba(120,130,150,.10);border-color:rgba(120,130,150,.30);color:#5b6474}
+[data-theme="dark"] .pln-tag--buy{color:#7ea2f0}
+[data-theme="dark"] .pln-tag--sell{color:#f0b25e}
+[data-theme="dark"] .pln-tag--stop{color:#f08a96}
+[data-theme="dark"] .pln-tag--wait{color:#9aa6c0}
+
+
+/* ── 汇总表「加仓条件」列（2026-10-24）──────────────────────── */
+.pos-ovw{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.pos-ov{min-width:920px}
+.pos-ov__buyc{white-space:nowrap;text-align:right}
+.pos-ov__buyc-v{font-family:var(--mono);font-weight:700;font-size:11.5px;color:var(--brand-fill)}
+.pos-ov__buyc-none{color:var(--ink-400);font-size:11.5px}
+
+
+/* ── 「进区间·不买」橙色警示（A 股红=涨，不能拿 is-up 用）────── */
+.gp.is-flag{color:#b45309}
+[data-theme="dark"] .gp.is-flag{color:#f0b25e}

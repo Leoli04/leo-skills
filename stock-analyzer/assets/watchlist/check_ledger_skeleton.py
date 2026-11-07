@@ -1,7 +1,7 @@
 """台账骨架体检：改完 / 重建完台账，确认「固定内容」没有被吃掉。
 
 **为什么需要这个脚本**（2026-11-07 事故，同一类已发生两次）：
-`render_watchlist.py` 只渲染「观察池」这一层 —— masthead、KPI、总览、四分区、
+`render_watchlist.py` 原本只渲染「观察池」这一层 —— masthead、KPI、总览、四分区、
 复核时间轴、口径说明。台账上另外四样东西**都不在它的产出里**，全靠事后补：
 
   1. 智能页面运行时      `<script src="/page/page_comm/inject.js">`（平台注入）
@@ -13,15 +13,24 @@
 页面看着完全正常，只有点「＋」没反应、点位表不联动 —— 用户先发现，比脚本晚一步。
 11-07 补施洛斯 tab 时又继承了同一个漏洞（没新增，但也没修）。
 
+**现状**：2/3/4 已固化成 `enhance/{enh.css,enh.js,pos_src.html}`，由渲染器
+`inject_enhancement()` 自动拼入（2026-11-07），重建不再丢；只有 1 仍需平台注入。
+本脚本保留为**回归防线** —— 渲染器改坏了、或谁手工贴了一份残缺页，都能拦住。
+
 **和 `check_ledger_gap.py` 的分工**（两个脚本都要跑，管的是不同层）：
 
   check_ledger_gap.py      行级内容  —— 该有的标的有没行、行里的胜率是不是旧值
   check_ledger_skeleton.py 页面骨架  —— 行之外的一切：智能页面 / 数据表 / 增强层 / Tab
 
 **判据为什么分三组**：
-`render` 阶段的产物本来就不含 smart 组（渲染器不产出），拿它判 FAIL 会天天误报，
-最后没人看。所以按阶段分级：`--stage render` 时 smart 组只 WARN，`--stage upload`
-（准备传库端）时必须全绿。这样「重建后随手一跑」不会吵，「传之前一跑」拦得住。
+`core` 是渲染器本来就产出的；`smart` 是历史上靠事后 patch 补、2026-11-07 起
+也由渲染器自带（见 `render_watchlist.py` 的 `inject_enhancement`）；`optional`
+是后加模块。两档阶段的区别只剩 **平台注入项**：
+
+  `--stage render`  本地刚渲染完。`inject.js` 由平台在上传时插入，本地必然没有，
+                    该项标 SKIP 不计告警 —— 其余 smart 项此时同样要求 PASS，
+                    因为渲染器已经自带增强层，缺了就是真坏了。
+  `--stage upload`  从库端拉回的产物。所有项一律 FAIL，包括 inject.js。
 
 **判据为什么用「CSS 里有没有 / JS 里有没有」而不是出现次数**：
 `padd-mini` 在合格件里只出现 6 次（CSS 5 + JS 1），因为它是一个类名和一个
@@ -133,10 +142,11 @@ CHECKS = [
          arg="wl-theme", label="三档主题 localStorage 键",
          hint="主题切换器失效，深色档用户会看到闪白"),
 
-    # ---- smart：库端才有的四样，render 阶段豁免 ----
-    dict(k="inject", group="smart", where="any", kind="token",
+    # ---- smart：数据表与增强层（渲染器自带）＋ 持仓 Tab，render 阶段全严 ----
+    dict(k="inject", group="smart", where="any", kind="token", platform=True,
          arg="/page_comm/inject.js", label="智能页面运行时 inject.js",
-         hint="没有它平台不认这是智能页面：块编辑与数据表联动都不工作"),
+         hint="没有它平台不认这是智能页面：块编辑与数据表联动都不工作。"
+              "本地件必然没有（平台上传时注入），从库端拉回仍缺才是真坏"),
     dict(k="bind", group="smart", where="body", kind="token",
          arg='data-sp-bindable', label="数据表绑定标记 data-sp-bindable",
          hint="平台靠它认数据集，缺了 #posSrc 就只是个普通 span"),
@@ -212,12 +222,18 @@ def evaluate(html: str) -> list[dict]:
 
 
 def level_of(r: dict, stage: str) -> str:
-    """PASS / FAIL / WARN。smart 组在 render 阶段降为 WARN。"""
+    """PASS / FAIL / WARN / SKIP。
+
+    smart 组自 2026-11-07 起由渲染器自带，render 阶段同样要求 PASS ——
+    只有 `platform=True` 的项（inject.js）在本地件上必然缺失，标 SKIP。
+    """
     if r["ok"]:
         return "PASS"
-    if r["group"] == "core" or r["group"] == "optional":
-        return "FAIL" if r["group"] == "core" else "WARN"
-    return "FAIL" if stage == "upload" else "WARN"
+    if r.get("platform") and stage != "upload":
+        return "SKIP"
+    if r["group"] == "optional":
+        return "WARN"
+    return "FAIL"
 
 
 def report(html: str, path: str, stage: str, quiet: bool) -> int:
@@ -236,7 +252,7 @@ def report(html: str, path: str, stage: str, quiet: bool) -> int:
             print("数据表 database-id：%s" % dbid)
         print()
 
-    fails = warns = 0
+    fails = warns = skips = 0
     # 拿报告页误跑时，core 会整组挂掉；先给一句人话，别让人去猜 10 条 FAIL
     if not any(r["k"] == "h1_title" and r["ok"] for r in res) and \
        not any(r["k"] == "h2_overview" and r["ok"] for r in res):
@@ -244,19 +260,26 @@ def report(html: str, path: str, stage: str, quiet: bool) -> int:
         print("  本脚本只体检台账；个股报告请用 verify_report.py。下面结果仅供参考。\n")
 
     groups = [("core", "① 骨架（渲染器产物，任何一份台账都该有）"),
-              ("smart", "② 智能页面 / 数据表 / 增强层 / 持仓 Tab（库端才有）"),
+              ("smart", "② 数据表 / 增强层 / 持仓 Tab（渲染器自带 · inject.js 由平台注入）"),
               ("optional", "③ 后加模块（缺了只提示）")]
     for gk, title in groups:
         items = [r for r in res if r["group"] == gk]
         shown = [(r, level_of(r, stage)) for r in items]
-        bad = [x for x in shown if x[1] != "PASS"]
+        bad = [x for x in shown if x[1] not in ("PASS", "SKIP")]
         if not quiet:
             print("=== %s ===" % title)
         if not bad:
             if not quiet:
-                print("  PASS  全部 %d 项在位" % len(items))
+                skipped = [r for r, lv in shown if lv == "SKIP"]
+                extra = ("（%d 项平台注入项待上传后确认）" % len(skipped)) if skipped else ""
+                print("  PASS  全部 %d 项在位%s" % (len(items) - len(skipped), extra))
         for r, lv in shown:
             if lv == "PASS":
+                continue
+            if lv == "SKIP":
+                skips += 1
+                if not quiet:
+                    print("  SKIP %s（平台上传时注入，本地件正常缺）" % r["label"])
                 continue
             fails += lv == "FAIL"
             warns += lv == "WARN"
@@ -269,15 +292,13 @@ def report(html: str, path: str, stage: str, quiet: bool) -> int:
     tail = ""
     if not ok:
         tail = "  → 先按上面的 └ 修复，再从库端拉回比对"
-    elif warns and stage != "upload":
-        # render 阶段有告警时**不能**说「可上传」：smart 组正是渲染器不产出、
-        # 必须事后补的那几样，此时传上去就是丢「＋」的那一版。
-        tail = "  → 上面 WARN 的项渲染器不产出，补齐后加 --stage upload 再确认可否上传"
     elif warns:
-        tail = "  → 仅提示项缺失，可上传"
+        tail = "  → 只有可选模块缺失，可上传"
+    elif skips:
+        tail = "  → 增强层齐备；inject.js 待平台注入，上传后拉回再用 --stage upload 复核"
     print("LEDGER_SKELETON_RESULT: %s (fail %d / warn %d%s)"
           % ("OK" if ok else "BROKEN", fails, warns,
-             "" if stage == "upload" else " / stage=render，smart 组缺失只告警"))
+             "" if stage == "upload" else " / stage=render"))
     if tail:
         print(tail)
     return 0 if ok else 1

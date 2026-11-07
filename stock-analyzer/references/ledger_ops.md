@@ -14,28 +14,40 @@ python <skill>/assets/watchlist/check_ledger_skeleton.py --html <新版.html> --
 
 | 时机 | 命令 | 期望 |
 |---|---|---|
-| 刚 `render_watchlist.py` 出来 | `--stage render`（默认） | `OK`，smart 组允许告警 |
-| 补完增强层 / Tab，准备上传 | `--stage upload` | `OK`，fail 0 |
+| 刚 `render_watchlist.py` 出来 | `--stage render`（默认） | `OK`；`inject.js` 标 SKIP（平台上传时才注入），其余 smart 项一律要求 PASS |
+| 准备上传 | `--stage upload` | `OK`，fail 0（此时 `inject.js` 也要在，所以只能对库端拉回件跑） |
 | 改完心里没底 | 加 `--diff <上一版>` | 输出「相对基准消失的结构标记」 |
 
-**渲染器不产出、每次整页重建必然丢的四样**（这就是「＋又丢了」的机制）：
+**这四样历史上渲染器不产出、每次整页重建必然丢**（这就是「＋又丢了」的机制）：
 
-| 丢什么 | 特征 | 后果 | 补法 |
+| 丢什么 | 特征 | 后果 | 现状 |
 |---|---|---|---|
-| 智能页面运行时 | `<script src="/page/page_comm/inject.js">` | 平台不认这是智能页面，块编辑与数据表联动全废 | 平台注入；本地文件里没有是正常的，**回拉的库端件必须有** |
-| 数据表绑定 | `#posSrc` + `data-sp-bindable` + `data-sp-database-id` | 加行写不进表 | 补 `<span class="pos-src" data-sp-bindable="database" data-sp-database-id="<库ID>" id="posSrc">` |
-| ＋加行增强层 | `.padd-mini`（CSS）+ `posMask` / `addRecord` / `fetchAll`（JS） | 点「＋」无反应，或表单能填但存不进 | 见下方「增强层移植」 |
-| 持仓与计划 Tab | `#view-pos` + `data-v="pos"` + `<h2>持仓与后期计划` | 持仓整块消失 | **别整页覆盖上传**，走库端行级补丁 |
+| 智能页面运行时 | `<script src="/page/page_comm/inject.js">` | 平台不认这是智能页面，块编辑与数据表联动全废 | 平台注入；本地件没有是正常的 |
+| 数据表绑定 | `#posSrc` + `data-sp-bindable` + `data-sp-database-id` | 加行写不进表 | **渲染器自带**（`enhance/pos_src.html`） |
+| ＋加行增强层 | `.padd-mini`（CSS）+ `posMask` / `addRecord` / `fetchAll`（JS） | 点「＋」无反应，或表单能填但存不进 | **渲染器自带**（`enhance/enh.css` + `enh.js`） |
+| 持仓与计划 Tab | `#view-pos` + `data-v="pos"` + `<h2>持仓与后期计划` | 持仓整块消失 | 渲染器本就产出（TEMPLATE 里） |
 
 **判据为什么按「CSS 里有没有 / JS 里有没有」拆，而不数次数**：`padd-mini` 在合格件里只出现 6 次（CSS 5 次样式定义 + 1 次 `b.className='padd-mini'`），因为它是一个类名和一次赋值，不是每行一个按钮。拿它跟观察池只数对账会得出「6 ≠ 104 所以坏了」的假结论。真正会半残的形态是**样式在、注入逻辑没了**（按钮永远不生成，页面看不出异常），所以 `padd_css` / `padd_js` 必须分开判。
 
-**增强层移植**（`<skill>/assets/watchlist/` 里没有，属一次性补丁）：从上一份含增强层的产物里取三块 —— 增强 CSS（从起点注释到 `<style>` 末尾）、`#posSrc` 徽标、增强脚本块（含 `padd-mini` / `posMask` 的那个 `<script>`），分别落到 `</head>` 前、原 `panel__d` 之后、`</body>` 前。定位 CSS 用**选择器差集法**：两版 `<style>` 按「选择器 → 规则」求集合差，缺失规则会连续落在同一段 offset 区间（11-07 实测 77 条全部落在 28440..35621，CSS 共 35622），比肉眼翻 3 万字符快得多。**补完必须跑 mock 全链路**：有 N 只观察池就应有 N 个「＋」，点开预填正确，保存后 `addRecord` 真被调用且写入类型化（`{"select":…}` / `{"number":…}` / `{"text":…}`）。
+**2026-11-07 已根治**：增强层不再靠事后补丁，而是固化成 `assets/watchlist/enhance/` 三个真源文件（`enh.css` 6.4 KB / `enh.js` 30.6 KB / `pos_src.html` 一行），`render_watchlist.py` 渲染完自动调 `inject_enhancement()` 拼进去：
 
-**根治方向（未做）**：`render_watchlist.py` 里这四样一处都没有，只要用它重建就必然复现。彻底修法是把增强层做成渲染器的模板常量；在那之前，本体检脚本就是唯一防线。
+| 块 | 落点 | 锚点 |
+|---|---|---|
+| `enh.css` | `</head>` 前，包在 `<style id="enh-style">` | `</head>` 唯一 |
+| `pos_src.html` | 持仓面板副标题 span 之后 | 那句「实际持仓口径 · 现价与观察池行情联动 · 计划为既定纪律非即时建议」唯一 |
+| `enh.js` | `</body>` 前，包在 `<script id="enh-script">` | `</body>` 唯一 |
+
+三处锚点各断言命中 1 次，不符即 `SystemExit`；`enhance/` 缺文件同样直接中止 —— **宁可渲染失败，也不要静默产出点不动的页面**。已有 `id="enh-style"` 时跳过（幂等）。数据表 id 走 `@@ENH_DB_ID@@` 占位符，由 `--database-id` 替换，默认 `LmhN0eFhk6hgXCjbOcSlaz`。
+
+**要改「＋」加行 / 持仓表单 / 数据表绑定的行为，就改 `enhance/` 下那两个文件**，别再写一次性补丁脚本。改完必须跑 mock 全链路：有 N 只观察池就应有 N 个「＋」，点开预填正确，保存后 `addRecord` 真被调用且写入类型化（`{"select":…}` / `{"number":…}` / `{"text":…}`）。
+
+**施洛斯 Tab 是另一回事**，不在渲染器里：它的数据（A 级名单、漏斗各层数量、口径日期）来自外部筛选 CSV，渲染器推不出来。用 `patch_schl_tab.py --html <台账> --csv <结果> --funnel "5927:全 A,167:估值初筛,..." --metrics-date <日期>` 叠加，幂等（已含 `id="view-schl"` 就跳过）。新视图一律 `schl-` 前缀类名，脚本末尾断言不得混入 `data-row` / `zone` / `zcard` / `wl` —— 混入的话 A 级那几只会被算进观察池的 KPI 与分区计数。
+
+**历史事故留档**（判据就是这么来的）：2026-11-05 那次整页重建覆盖上传，丢了数据表绑定 + 增强层 + 持仓 Tab，页面看着完全正常，只有点「＋」没反应 —— **用户先发现，比脚本晚一步**。补的时候定位 CSS 用的是**选择器差集法**：两版 `<style>` 按「选择器 → 规则」求集合差，缺失规则会连续落在同一段 offset 区间（11-07 实测 77 条全部落在 28440..35621，CSS 共 35622），比肉眼翻 3 万字符快得多。
 
 ## 持仓与计划 Tab（2026-10-16 起，render 自动生成）
 
-manifest 顶层 `positions` 段记录用户**实际持仓**（每条含 `code / name / strategy(做T底仓|波段|利润底仓…) / opened / shares / shares_total / cost 或 cost_label / note / plan[[环节,动作]...]`）→ 渲染为「持仓与计划」Tab：概览表（点击行跳转对应计划卡）→ 汇总条 → 各持仓计划卡；现价与观察池行情联动。**仓位变动只需改 `positions` 段再跑 ③④**。观察池内实际持仓标的徽标固定「持仓中」（tooltip=op 摘要）；报告原文「操作」字段仍按压缩文案显示（如茅台「持有中」），两者口径不同属预期。**持仓判定与报告判定相互独立**（康比特判定「不买 · 观望」但持有利润底仓），不得互相覆盖。⚠️ 库端台账若含「持仓与计划」Tab，**一律不要用本地整页渲染覆盖上传**（本地整页渲染无法产出该 Tab，须走库端行级补丁路径）。
+manifest 顶层 `positions` 段记录用户**实际持仓**（每条含 `code / name / strategy(做T底仓|波段|利润底仓…) / opened / shares / shares_total / cost 或 cost_label / note / plan[[环节,动作]...]`）→ 渲染为「持仓与计划」Tab：概览表（点击行跳转对应计划卡）→ 汇总条 → 各持仓计划卡；现价与观察池行情联动。**仓位变动只需改 `positions` 段再跑 ③④**。观察池内实际持仓标的徽标固定「持仓中」（tooltip=op 摘要）；报告原文「操作」字段仍按压缩文案显示（如茅台「持有中」），两者口径不同属预期。**持仓判定与报告判定相互独立**（康比特判定「不买 · 观望」但持有利润底仓），不得互相覆盖。⚠️ 渲染器产出的持仓面板是 **manifest 静态快照**，与库端数据表可能行数不同（快照 11 行 vs 表 12 行是常态）；增强层脚本在运行时用 `fetchAll` 拉全量并接管 `#view-pos .panel__body`，所以静态部分的差值只在「脚本没跑起来」时才可见。整页覆盖上传时务必确认 `enh.js` 在位（`check_ledger_skeleton.py` 会拦），否则页面上就是那份落后的快照。稳妥路径仍是行级补丁。
 
 ## 台账命名与现价刷新口径（2026-10-16 用户裁定）
 
