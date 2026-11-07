@@ -269,6 +269,10 @@ def report(html: str, path: str, stage: str, quiet: bool) -> int:
     tail = ""
     if not ok:
         tail = "  → 先按上面的 └ 修复，再从库端拉回比对"
+    elif warns and stage != "upload":
+        # render 阶段有告警时**不能**说「可上传」：smart 组正是渲染器不产出、
+        # 必须事后补的那几样，此时传上去就是丢「＋」的那一版。
+        tail = "  → 上面 WARN 的项渲染器不产出，补齐后加 --stage upload 再确认可否上传"
     elif warns:
         tail = "  → 仅提示项缺失，可上传"
     print("LEDGER_SKELETON_RESULT: %s (fail %d / warn %d%s)"
