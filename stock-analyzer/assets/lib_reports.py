@@ -68,8 +68,7 @@ def _find_library_dir():
     for _ in range(4):
         root = os.path.dirname(root)
         cands.append(os.path.join(root, "library"))
-    for base in (os.environ.get("LOCALAPPDATA"), os.environ.get("APPDATA"),
-                 os.path.expanduser("~")):
+    for base in (os.environ.get("LOCALAPPDATA"), os.environ.get("APPDATA")):
         if base:
             cands.append(os.path.join(
                 base, "Programs", "WorkBuddy", "resources", "app.asar.unpacked",
