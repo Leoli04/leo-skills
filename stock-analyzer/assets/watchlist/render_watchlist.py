@@ -2199,38 +2199,115 @@ var WL_MODEL = @@PX_MODEL@@;</script>
   }
 
   /* ── 取价 ─────────────────────────────────────────────────────── */
-  function loadQuotes(codes, done){
-    var batches = [], i, got = {}, left = 0, failed = 0;
-    for(i = 0; i < codes.length; i += 30) batches.push(codes.slice(i, i + 30));
-    if(!batches.length){ done(got, 0); return; }
-    left = batches.length;
-    function settle(ok){
-      if(!ok) failed++;
-      left--;
-      if(left === 0) done(got, failed);
+  /* 取价走两条互相独立的通道，先 fetch 再用 script 兜底（2026-11-09 补）。
+     原实现只有 script 一条：把 `v_sh600742="…"` 当 JS 执行，再从 window 读全局。
+     本条在本地 file:// 实测正常，但在资料库/预览的宿主页里可整批静默失败，且失败
+     原因被压成一句「行情取不到」，看不出是网络、CSP 还是 MIME 不可执行。
+     实测该接口回 `Access-Control-Allow-Origin: *`，故 CORS fetch 可用；它不依赖
+     脚本执行权限（script-src 被卡时 connect-src 往往仍放行），也不受 text/html
+     MIME 判定影响。两条都保留，任一拿到即算成功，并如实回报走了哪条、为何失败。 */
+  var QUOTE_URL = 'https://qt.gtimg.cn/q=';
+  function gbkDecode(buf){
+    try{ return new TextDecoder('gbk').decode(buf); }
+    catch(e){
+      /* TextDecoder 不支持 gbk 时退到 latin1：价格与时间戳都是 ASCII，仍能解析，
+         只有中文名会乱——行情名本页不用，显示名称取自台账自带字段。 */
+      var v = new Uint8Array(buf), s = '', i;
+      for(i = 0; i < v.length; i++) s += String.fromCharCode(v[i]);
+      return s;
     }
-    batches.forEach(function(b){
-      var s = document.createElement('script');
-      s.charset = 'gbk';
-      var ids = b.map(secid);
-      s.src = 'https://qt.gtimg.cn/q=' + ids.join(',');
-      var done1 = false;
-      function once(ok){ if(done1) return; done1 = true; settle(ok); }
-      s.onload = function(){
-        for(var j = 0; j < b.length; j++){
-          var raw = window['v_' + ids[j]];
-          if(!raw) continue;
-          var f = String(raw).split('~');
-          var px = parseFloat(f[3]);
-          if(!px || px <= 0) continue;
-          got[b[j]] = { px: px, str: px.toFixed(2), ts: f[30] || '',
-                        chg: isNaN(parseFloat(f[32])) ? null : parseFloat(f[32]) };
+  }
+  function takeQuote(code, fields, got){
+    var px = parseFloat(fields[3]);
+    if(!px || px <= 0) return 0;
+    got[code] = { px: px, str: px.toFixed(2), ts: fields[30] || '',
+                  chg: isNaN(parseFloat(fields[32])) ? null : parseFloat(fields[32]) };
+    return 1;
+  }
+  function parseQuoteText(txt, codes, got){
+    var byId = {}, i, n = 0, m;
+    for(i = 0; i < codes.length; i++) byId[secid(codes[i])] = codes[i];
+    var re = /v_([A-Za-z0-9]+)="([^"]*)"/g;
+    while((m = re.exec(txt))){
+      if(!byId[m[1]]) continue;
+      n += takeQuote(byId[m[1]], m[2].split('~'), got);
+    }
+    return n;
+  }
+  function fetchBatch(ids, codes, got){
+    if(typeof fetch !== 'function') return Promise.reject(new Error('浏览器无 fetch'));
+    var ctl = (typeof AbortController === 'function') ? new AbortController() : null;
+    var timer = ctl ? setTimeout(function(){ ctl.abort(); }, 8000) : null;
+    var opt = { cache: 'no-store', credentials: 'omit' };
+    if(ctl) opt.signal = ctl.signal;
+    return fetch(QUOTE_URL + ids.join(','), opt).then(function(r){
+      if(!r.ok) throw new Error('HTTP ' + r.status);
+      return r.arrayBuffer();
+    }).then(function(buf){
+      if(timer) clearTimeout(timer);
+      return parseQuoteText(gbkDecode(buf), codes, got);
+    }).catch(function(e){
+      if(timer) clearTimeout(timer);
+      throw e;
+    });
+  }
+  /* 失败原因去重后再报：4 个批次会把同一个错重复 4 次，粘到页面上没意义 */
+  function uniqReasons(list, max){
+    var out = [], i;
+    for(i = 0; i < list.length; i++){
+      if(out.indexOf(list[i]) < 0) out.push(list[i]);
+      if(out.length >= (max || 3)) break;
+    }
+    return out.join('；');
+  }
+  /* done(got, failed, via, detail)
+     via = fetch | script | none；detail = 失败原因（成功时为 ''） */
+  function loadQuotes(codes, done){
+    var batches = [], i, got = {}, reasons = [];
+    for(i = 0; i < codes.length; i += 30) batches.push(codes.slice(i, i + 30));
+    if(!batches.length){ done(got, 0, 'none', ''); return; }
+
+    function viaScript(){
+      var left = batches.length;
+      batches.forEach(function(b){
+        var ids = b.map(secid), s = document.createElement('script'), fin = false;
+        s.charset = 'gbk';
+        s.src = QUOTE_URL + ids.join(',');
+        function once(ok, why){
+          if(fin) return;
+          fin = true;
+          if(!ok) reasons.push('script ' + why);
+          if(--left > 0) return;
+          if(Object.keys(got).length){
+            done(got, 0, 'script', '');
+          }else{
+            if(!reasons.length) reasons.push('script 无数据');
+            done({}, batches.length, 'none', uniqReasons(reasons, 3));
+          }
         }
-        once(true);
-      };
-      s.onerror = function(){ once(false); };
-      setTimeout(function(){ once(false); }, 9000);
-      document.head.appendChild(s);
+        s.onload = function(){
+          var j, hit = 0;
+          for(j = 0; j < b.length; j++){
+            var raw = window['v_' + ids[j]];
+            if(raw) hit += takeQuote(b[j], String(raw).split('~'), got);
+          }
+          if(!hit) reasons.push('script 已加载但无 v_ 变量');
+          once(true);
+        };
+        s.onerror = function(){ once(false, '加载失败'); };
+        setTimeout(function(){ once(false, '超时 9s'); }, 9000);
+        document.head.appendChild(s);
+      });
+    }
+
+    Promise.all(batches.map(function(b){
+      return fetchBatch(b.map(secid), b, got).catch(function(e){
+        reasons.push('fetch ' + ((e && e.message) || e));
+        return 0;
+      });
+    })).then(function(){
+      if(Object.keys(got).length){ done(got, 0, 'fetch', ''); return; }
+      viaScript();
     });
   }
   function applyQuotes(got){
@@ -2274,15 +2351,23 @@ var WL_MODEL = @@PX_MODEL@@;</script>
     if(MSG){ MSG.className = 'pxmsg'; MSG.textContent = '正在获取行情…'; }
     var codes = M.rows.map(function(r){ return r.c; });
     for(var k in M.pos){ if(M.pos.hasOwnProperty(k) && codes.indexOf(k) < 0) codes.push(k); }
-    loadQuotes(codes, function(got, failed){
+    loadQuotes(codes, function(got, failed, via, detail){
       busy = false;
       if(BTN) BTN.disabled = false;
       var n = 0, kk;
       for(kk in got){ if(got.hasOwnProperty(kk)) n++; }
       if(!n){
+        /* 失败原因照实写出来，别再让「离线 / 被拦截 / 非交易时段」这种三选一
+           猜测充当诊断——下次出问题要看得出是 fetch 被拒还是 script 被拦。 */
+        if(typeof console !== 'undefined' && console.warn){
+          console.warn('[wl] 取价失败：' + (detail || '无详情'));
+        }
         if(MSG){
           MSG.className = 'pxmsg is-err';
-          MSG.textContent = '行情取不到（离线 / 被浏览器拦截 / 非交易时段），仍显示 ' + M.asof + ' 快照';
+          MSG.textContent = '行情取不到（' + (detail || '离线 / 被浏览器拦截 / 非交易时段') +
+                            '），仍显示 ' + M.asof + ' 快照';
+          MSG.title = '取价通道：fetch（CORS）与 script 均未返回数据。明细：' +
+                       (detail || '无');
         }
         return;
       }
@@ -2293,6 +2378,7 @@ var WL_MODEL = @@PX_MODEL@@;</script>
       if(ST) ST.innerHTML = '现价为 <b>' + stamp() + '</b> 实时行情 · 已重算潜在空间 / 距买点 / 分布 / 矩阵 / 持仓';
       if(MSG){
         MSG.className = 'pxmsg';
+        MSG.title = '取价通道：' + (via === 'script' ? 'script 标签（fetch 未取到）' : 'fetch（CORS）');
         MSG.textContent = '更新 ' + updated + ' 只' +
           (failed ? '（' + failed + ' 批失败）' : '') + ' · ' + new Date().toTimeString().slice(0, 8);
       }
