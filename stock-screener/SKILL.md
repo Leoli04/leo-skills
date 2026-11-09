@@ -81,7 +81,7 @@ tick-stock-panel 的做法（`backend/app/backtest/fundamentals.py`）：
 ## 用法
 
 ```bash
-cd C:\Users\86130\.workbuddy\skills\stock-screener\scripts
+cd "$HOME/.workbuddy/skills/stock-screener/scripts"
 
 python screen.py --list                    # 列出 12 类及判据
 python screen.py                           # 跑全部 → 候选池看板.html
