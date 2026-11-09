@@ -2199,13 +2199,22 @@ var WL_MODEL = @@PX_MODEL@@;</script>
   }
 
   /* ── 取价 ─────────────────────────────────────────────────────── */
+  /* 记 CSP 拦截。fetch 被策略拦下时只会抛 "Failed to fetch"，和断网、
+     证书错误完全同形；只有 securitypolicyviolation 事件能说出「是哪条指令
+     拦的」。宿主页（资料库/预览）各套各的策略，必须能分辨。 */
+  var CSPHIT = [];
+  if(document.addEventListener){
+    document.addEventListener('securitypolicyviolation', function(e){
+      var host = (e.blockedURI || '').replace(/^https?:\/\//, '').split('/')[0];
+      CSPHIT.push((e.violatedDirective || 'CSP').split(' ')[0] + ' 拦 ' + (host || '?'));
+    }, true);
+  }
   /* 取价走两条互相独立的通道，先 fetch 再用 script 兜底（2026-11-09 补）。
      原实现只有 script 一条：把 `v_sh600742="…"` 当 JS 执行，再从 window 读全局。
      本条在本地 file:// 实测正常，但在资料库/预览的宿主页里可整批静默失败，且失败
      原因被压成一句「行情取不到」，看不出是网络、CSP 还是 MIME 不可执行。
-     实测该接口回 `Access-Control-Allow-Origin: *`，故 CORS fetch 可用；它不依赖
-     脚本执行权限（script-src 被卡时 connect-src 往往仍放行），也不受 text/html
-     MIME 判定影响。两条都保留，任一拿到即算成功，并如实回报走了哪条、为何失败。 */
+     实测：本地 file:// 两条都通；预览面板 connect-src 拦住 fetch、script 仍通。
+     故两条都留，任一拿到即算成功，并如实回报走了哪条、为何失败。 */
   var QUOTE_URL = 'https://qt.gtimg.cn/q=';
   function gbkDecode(buf){
     try{ return new TextDecoder('gbk').decode(buf); }
@@ -2282,7 +2291,7 @@ var WL_MODEL = @@PX_MODEL@@;</script>
             done(got, 0, 'script', '');
           }else{
             if(!reasons.length) reasons.push('script 无数据');
-            done({}, batches.length, 'none', uniqReasons(reasons, 3));
+            done({}, batches.length, 'none', uniqReasons(CSPHIT.concat(reasons), 3));
           }
         }
         s.onload = function(){
