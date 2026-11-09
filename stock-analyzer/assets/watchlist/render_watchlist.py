@@ -1088,7 +1088,7 @@ def main():
 
 
 TEMPLATE = r"""<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -1102,7 +1102,9 @@ TEMPLATE = r"""<!DOCTYPE html>
   /* ── 配色三档 ───────────────────────────────────────────────────────
      2026-10-09 中途修订：首版为「柔和(#f8fafc) / 标准(#fff) / 深色」，用户反馈
      前者与后者观感差异过小（层次差仅 4% 明度），故合并为一档，空出的位置换成
-     暖色低蓝光的「护眼」。现为 标准（默认）/ 护眼 / 深色。
+     暖色低蓝光的「护眼」。现为 深色（默认，2026-11-09 用户裁定）/ 标准 / 护眼。
+     `:root` 里这套值仍是「标准」——它现在是 `[data-theme="std"]` 的取值来源，
+     `<html data-theme="dark">` 把页面默认盖到深色档，切换器照样三档可选。
      切换器在 masthead 右上角，选择存 localStorage（键 wl-theme）。
      三档共用同一套语义分层：红绿只服务涨跌，判定三桶走 slate / indigo / amber。
 
@@ -1164,7 +1166,11 @@ TEMPLATE = r"""<!DOCTYPE html>
         配 #fff 会成白底白字，必须单独给值。                              */
   --bg:#111419; --surface:#1a1f28; --surface-2:#161a22; --surface-3:#232a36;
   --line:#2c3442; --line-2:#212836;
-  --ink-900:#edf1f8; --ink-700:#c6d0e0; --ink-500:#8f9aad; --ink-400:#6f7a8c; --ink-300:#5b6576;
+  /* 2026-11-09 提升三级灰：深色档改为默认后逐元素量了一遍对比度，
+     原 ink-400 #6f7a8c 在卡面 #1a1f28 上只有 3.81:1（小字 AA 要 4.5），
+     ink-300 #5b6576 只有 2.81:1。现 ink-400→#8590a2（5.12）、
+     ink-300→#6b7484（3.51），层级仍单调递增：300 < 400 < 500 < 700 < 900。 */
+  --ink-900:#edf1f8; --ink-700:#c6d0e0; --ink-500:#8f9aad; --ink-400:#8590a2; --ink-300:#6b7484;
   --brand:#7d9bff; --brand-soft:#1d2540; --brand-fill:#4d6ee0;
   --solid:#39445a; --on-solid:#fff; --on-brand:#fff;
   --up:#ff6b6b; --up-soft:#3a1e22; --down:#3ecf92; --down-soft:#12332a;
@@ -1564,11 +1570,14 @@ details.notes[open]>summary::before{content:"▾ "}
 .foot{margin-top:var(--s6);padding-top:var(--s4);border-top:1px solid var(--line);
   font-size:var(--fs-xs);color:var(--ink-400);line-height:1.95}
 </style>
-<script>/* 提前套用配色档位，避免深色档先闪一下浅色（FOUC）。
-   std 档无独立覆盖规则，setAttribute 后继承 :root 默认值即该档效果。
+<script>/* 提前套用配色档位，避免先闪一下别的档（FOUC）。
+   **默认档自 2026-11-09 起改为「深色」**（用户裁定）：无 localStorage 记录时落 dark，
+   <html> 标签上也写死了 data-theme="dark"，所以 JS 被禁也不回退成浅色。
+   std 档无独立覆盖规则，setAttribute('std') 后继承 :root 默认值即该档效果。
    键值兼容：首版的 soft / std 两档已合并为「标准」，旧值一律落到 std。 */
 (function(){try{var m={soft:'std',eye:'eye',std:'std',dark:'dark'};
-var t=m[localStorage.getItem('wl-theme')];if(t){document.documentElement.setAttribute('data-theme',t);}}catch(e){}})();</script>
+var t=m[localStorage.getItem('wl-theme')]||'dark';
+document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
 <script>/* 视图 Tab：持仓与计划（默认）/ 观察池。选择存 localStorage（键 wl-view2），点击切换在此。 */
 (function(){
   function show(v){
@@ -1610,7 +1619,7 @@ var t=m[localStorage.getItem('wl-theme')];if(t){document.documentElement.setAttr
     台账口径：期望价为报告内「折现 + 概率加权」结果；建仓门槛为 潜在空间 ≥ +15% 且买入胜率 ≥ 30%
   </p>
   <div class="tt" role="group" aria-label="配色档位">
-    <button type="button" class="tt__b" data-t="std" aria-pressed="true">标准</button><button type="button" class="tt__b" data-t="eye" aria-pressed="false">护眼</button><button type="button" class="tt__b" data-t="dark" aria-pressed="false">深色</button>
+    <button type="button" class="tt__b" data-t="std" aria-pressed="false">标准</button><button type="button" class="tt__b" data-t="eye" aria-pressed="false">护眼</button><button type="button" class="tt__b" data-t="dark" aria-pressed="true">深色</button>
   </div>
 </header>
 
@@ -1859,7 +1868,7 @@ var t=m[localStorage.getItem('wl-theme')];if(t){document.documentElement.setAttr
         try{ localStorage.setItem(KEY, t); }catch(e){}
       });
     });
-    mark(document.documentElement.getAttribute('data-theme') || 'std');
+    mark(document.documentElement.getAttribute('data-theme') || 'dark');
   })();
 })();
 </script>
