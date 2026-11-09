@@ -728,12 +728,15 @@ python <skill>/assets/verify_report.py "<报告.html>" --skill-dir <skill>
 ② 建档   更新 assets/watchlist/watchlist_manifest.json 的 file / report_date / lib_url
 ③ 构建   python assets/watchlist/build_watchlist.py --manifest <manifest> \
              --out .tmp/ledger_final.json --prev .tmp/ledger_prev.json
+③b 计划表  python assets/watchlist/sync_plan_table.py pull    # 2026-10-29 起必跑
+             （资料库《持仓与计划》表 → plan_table.json；打印与 manifest 的口径对账告警）
 ④ 渲染   python assets/watchlist/render_watchlist.py --data .tmp/ledger_final.json \
              --out "<工作目录>/投资观察池台账-<YYYYMMDD>.html" --asof <YYYY-MM-DD> \
              --prev-cutoff "最新批次（<MM-DD/MM-DD>）" --fresh-from <YYYY-MM-DD>
          自 2026-11-07 起渲染器**自带交互增强层**（数据表绑定 #posSrc、「＋」加行、
          持仓编辑），从 assets/watchlist/enhance/ 自动拼入，重建不再丢。换数据表用它
          `--database-id`，只在本地预览不上传时才 `--no-enhance`。
+         计划持仓区默认读 `--manifest` 同目录的 `plan_table.json`，换位置用 `--plan-table`。
 ④b 加施洛斯视图（可选，仅当这轮跑过施洛斯筛选）
          python assets/watchlist/patch_schl_tab.py --html "<上一步产物>" --csv <筛选结果.csv> \
              --funnel "5927:全 A,167:估值初筛,69:财务六关,38:九关全过" --metrics-date <YYYY-MM-DD>
@@ -802,6 +805,7 @@ python lib_reports.py archive --manifest <...> --node-id <旧版 id> --dry-run
 - `watchlist_manifest.json` —— **唯一配置源**：全部在池标的的 `code / name / cat / file / report_date / lib_url / overrides`，以及资料库 `space_id` / `parent_id`（投资根）/ `report_folder_id`（个股报告）/ `archive_folder_id`（旧版归档，位于个股报告内部）。新增标的或产出新报告后改这里，不改脚本。
 - `build_watchlist.py` —— 从 manifest 指定的报告里抽取结论字段，产出 `ledger_final.json`；带 `--prev` 时与上期快照比对生成「◆ 判定/期望价/胜率变化」标记，并把当前结果写回作为下期基线。同时打印自检清单（无判定 / A 类缺现价 / 缺链接 / 无结论横条需人工核对）。
 - `refresh_prices.py` —— **可选**：把现价刷成实时行情产出 `ledger_live.json`（渲染配 `--px-asof`）；**只改现价，期望价 / 胜率 / 观察买点不动**。细则见 `references/ledger_ops.md`「台账命名与现价刷新口径」。
+- `sync_plan_table.py` —— **计划持仓同步（2026-10-29 新增）**：资料库《持仓与计划》表 → `plan_table.json`。`pull` 落盘 + 打印对账告警，`check` 只对账。表是计划持仓的唯一真源，渲染只读缓存、不联网。真源分工与冲突判据见 `references/ledger_ops.md`「持仓与计划 Tab」。
 - `render_watchlist.py` —— 渲染零依赖离线 HTML 台账。**⚠️ 库端台账含「持仓与计划」Tab 时（manifest `positions` 段，2026-10-16 起），不得用本地整页渲染覆盖上传，须走库端行级补丁**；其余细则见 `references/ledger_ops.md`。
 - `check_ledger_gap.py` —— **台账的 audit（行级）**：本地根目录报告代码集 vs 库端台账 `data-k` 代码集，输出 `MISSING / STALE / EXTRA` 与 `LEDGER_GAP_RESULT: CLEAN|NEEDS_ACTION`（退出码 0/1/2）。支持 `--pull`（先拉最新库端台账）、`--ledger`（指定快照）、`--quiet`（只出结论行）。**每轮报告交付收尾必跑，`NEEDS_ACTION` 时不许报完成。** `STALE` 判据用胜率而非潜在空间，理由见脚本 docstring。
 - `check_ledger_skeleton.py` —— **台账的骨架体检（行之外的一切）**，与上一条互补：gap 管「该有的标的有没行、行里的数对不对」，本脚本管「智能页面在不在、数据表还连着没、＋还能不能加行」。三组判据 —— ① core：`h1` + 四个 `h2` 模块（全池总览 / 分区台账 / 复核时间轴 / 口径与设计说明）+ `zone zone--` + `WL_MODEL` + `#pxbar` + `qt.gtimg.cn` + `wl-theme`；② smart：`inject.js`（平台注入，render 阶段 SKIP）/ `#posSrc` + `data-sp-bindable` + `data-sp-database-id` / `.padd-mini`（CSS 与 JS 分开判）/ `posMask` / `addRecord` / `fetchAll` / `#view-pos` + `data-v="pos"`；③ optional：施洛斯 Tab。`--stage render|upload` 只影响 `inject.js` 一项（本地件必然没有），其余一律按有无判 FAIL，`--diff <基准>` 输出相对丢失项。**每次改台账后、上传前必跑**，判据设计理由见上一条交付前自检项。
