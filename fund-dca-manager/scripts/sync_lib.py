@@ -32,11 +32,55 @@ import subprocess
 import sys
 from datetime import datetime
 
-LIB = os.environ.get("CODEBUDDY_SKILL_DIR") or os.path.expanduser(
-    r"C:\Users\86130\AppData\Local\Programs\WorkBuddy\resources\app.asar.unpacked"
-    r"\resources\plugins\workbuddy-builtin\skills\library")
-if not os.path.isdir(LIB) or not os.path.exists(os.path.join(LIB, "space_api.py")):
-    LIB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "library")
+_LIB_TRIED = []
+
+
+def _find_library_dir():
+    """定位 WorkBuddy library skill 目录（需含 space_api.py）。
+
+    不写死用户名与安装路径：先认环境变量，再按相对位置往上找兄弟目录，
+    最后用系统的 LOCALAPPDATA / APPDATA / 用户主目录拼出内置与用户级安装位。
+    全部失败返回空串，调用方负责给清晰报错（见 _lib_missing_msg）。
+    """
+    def hit(p):
+        return bool(p) and os.path.isfile(os.path.join(p, "space_api.py"))
+
+    here = os.path.dirname(os.path.abspath(__file__))
+    cands = []
+    for env in ("WORKBUDDY_LIBRARY_DIR", "CODEBUDDY_SKILL_DIR"):
+        v = os.environ.get(env)
+        if v:
+            cands.extend((v, os.path.join(v, "library")))
+    root = here
+    for _ in range(4):
+        root = os.path.dirname(root)
+        cands.append(os.path.join(root, "library"))
+    for base in (os.environ.get("LOCALAPPDATA"), os.environ.get("APPDATA"),
+                 os.path.expanduser("~")):
+        if base:
+            cands.append(os.path.join(
+                base, "Programs", "WorkBuddy", "resources", "app.asar.unpacked",
+                "resources", "plugins", "workbuddy-builtin", "skills", "library"))
+    cands.append(os.path.join(os.path.expanduser("~"), ".workbuddy", "skills", "library"))
+
+    del _LIB_TRIED[:]
+    seen = set()
+    for d in cands:
+        if not d or d in seen:
+            continue
+        seen.add(d)
+        _LIB_TRIED.append(d)
+        if hit(d):
+            return d
+    return ""
+
+
+def _lib_missing_msg():
+    return ("未找到 WorkBuddy library skill（该目录需含 space_api.py）。已探测：\n"
+            + "\n".join("  - " + p for p in _LIB_TRIED)
+            + "\n用环境变量 WORKBUDDY_LIBRARY_DIR=<library 目录> 指定后重试。")
+
+LIB = _find_library_dir()
 PY = sys.executable
 
 ACC_FIELDS = ["账户ID", "账户名称", "总资金", "周预算基准", "周预算上限", "说明"]
@@ -47,6 +91,8 @@ POS_FIELDS = ["账户", "代码", "名称", "当前市值", "成本价", "累计
 
 # ---------- 资料库读写 ----------
 def _run(script, *args, stdin_data=None):
+    if not LIB:
+        raise SystemExit(_lib_missing_msg())
     p = subprocess.run([PY, os.path.join(LIB, script)] + list(args), cwd=LIB,
                        input=stdin_data, capture_output=True, text=True, encoding="utf-8")
     if p.returncode != 0:

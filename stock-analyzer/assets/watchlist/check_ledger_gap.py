@@ -114,13 +114,58 @@ def newest_snapshot(root: str) -> str | None:
     return max(cands, key=os.path.getmtime) if cands else None
 
 
+_LIB_TRIED = []
+
+
+def _find_library_dir():
+    """定位 WorkBuddy library skill 目录（需含 space_api.py）。
+
+    不写死用户名与安装路径：先认环境变量，再按相对位置往上找兄弟目录，
+    最后用系统的 LOCALAPPDATA / APPDATA / 用户主目录拼出内置与用户级安装位。
+    全部失败返回空串，调用方负责给清晰报错（见 _lib_missing_msg）。
+    """
+    def hit(p):
+        return bool(p) and os.path.isfile(os.path.join(p, "space_api.py"))
+
+    here = os.path.dirname(os.path.abspath(__file__))
+    cands = []
+    for env in ("WORKBUDDY_LIBRARY_DIR", "CODEBUDDY_SKILL_DIR"):
+        v = os.environ.get(env)
+        if v:
+            cands.extend((v, os.path.join(v, "library")))
+    root = here
+    for _ in range(4):
+        root = os.path.dirname(root)
+        cands.append(os.path.join(root, "library"))
+    for base in (os.environ.get("LOCALAPPDATA"), os.environ.get("APPDATA"),
+                 os.path.expanduser("~")):
+        if base:
+            cands.append(os.path.join(
+                base, "Programs", "WorkBuddy", "resources", "app.asar.unpacked",
+                "resources", "plugins", "workbuddy-builtin", "skills", "library"))
+    cands.append(os.path.join(os.path.expanduser("~"), ".workbuddy", "skills", "library"))
+
+    del _LIB_TRIED[:]
+    seen = set()
+    for d in cands:
+        if not d or d in seen:
+            continue
+        seen.add(d)
+        _LIB_TRIED.append(d)
+        if hit(d):
+            return d
+    return ""
+
+
+def _lib_missing_msg():
+    return ("未找到 WorkBuddy library skill（该目录需含 space_api.py）。已探测：\n"
+            + "\n".join("  - " + p for p in _LIB_TRIED)
+            + "\n用环境变量 WORKBUDDY_LIBRARY_DIR=<library 目录> 指定后重试。")
+
+
 def pull(root: str, node_id: str, space_id: str) -> str | None:
     """从库端拉最新台账 HTML。依赖 library skill 的 space_api.py。"""
-    api_candidates = [
-        os.environ.get("WORKBUDDY_LIBRARY_DIR", ""),
-        r"C:/Users/86130/AppData/Local/Programs/WorkBuddy/resources/app.asar.unpacked"
-        r"/resources/plugins/workbuddy-builtin/skills/library",
-    ]
+    api_candidates = [_find_library_dir()]
     api = ""
     for d in api_candidates:
         if d and os.path.exists(os.path.join(d, "space_api.py")):

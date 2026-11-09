@@ -34,8 +34,9 @@ IND_CACHE = os.path.join(HERE, "industry_cache.json")
 
 # 全市场横截面筛选工具（腾讯自选股数据），单文件、无需 npm install
 CLI = "node scripts/index.js"
-CLI_DIR = ("C:/Users/86130/.workbuddy/plugins/cache/cb_teams_marketplace"
-           "/finance-data/1.6.0/skills/westock-tool")
+CLI_DIR = os.path.join(os.path.expanduser("~"), ".workbuddy", "plugins", "cache",
+                       "cb_teams_marketplace", "finance-data", "1.6.0",
+                       "skills", "westock-tool")
 
 # ⚠️ 筛选接口只回传「参与筛选的字段」。要展示的判据必须出现在条件里，
 # 否则看板该列全是空值。恒真条件仅为取值，勿删。
@@ -253,6 +254,8 @@ PROFILE_COLS = {
 # ================================================================= 数据获取
 def _cli(args, retries=3):
     """调用筛选工具。失败时退避重试 —— 实测偶发空返回。"""
+    if not os.path.isdir(CLI_DIR):
+        raise SystemExit("筛选工具目录不存在：%s\n        （stock-screener 需先装 finance-data / westock 工具插件）" % CLI_DIR)
     for i in range(retries):
         out = subprocess.run(f"{CLI} {args}", shell=True, cwd=CLI_DIR,
                              capture_output=True, text=True, encoding="utf-8")

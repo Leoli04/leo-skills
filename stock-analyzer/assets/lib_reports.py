@@ -45,10 +45,55 @@ from datetime import datetime
 
 # ---------------------------------------------------------------- 常量
 
-DEFAULT_LIB_DIR = (
-    r"C:\Users\86130\AppData\Local\Programs\WorkBuddy\resources\app.asar.unpacked"
-    r"\resources\plugins\workbuddy-builtin\skills\library"
-)
+_LIB_TRIED = []
+
+
+def _find_library_dir():
+    """定位 WorkBuddy library skill 目录（需含 space_api.py）。
+
+    不写死用户名与安装路径：先认环境变量，再按相对位置往上找兄弟目录，
+    最后用系统的 LOCALAPPDATA / APPDATA / 用户主目录拼出内置与用户级安装位。
+    全部失败返回空串，调用方负责给清晰报错（见 _lib_missing_msg）。
+    """
+    def hit(p):
+        return bool(p) and os.path.isfile(os.path.join(p, "space_api.py"))
+
+    here = os.path.dirname(os.path.abspath(__file__))
+    cands = []
+    for env in ("WORKBUDDY_LIBRARY_DIR", "CODEBUDDY_SKILL_DIR"):
+        v = os.environ.get(env)
+        if v:
+            cands.extend((v, os.path.join(v, "library")))
+    root = here
+    for _ in range(4):
+        root = os.path.dirname(root)
+        cands.append(os.path.join(root, "library"))
+    for base in (os.environ.get("LOCALAPPDATA"), os.environ.get("APPDATA"),
+                 os.path.expanduser("~")):
+        if base:
+            cands.append(os.path.join(
+                base, "Programs", "WorkBuddy", "resources", "app.asar.unpacked",
+                "resources", "plugins", "workbuddy-builtin", "skills", "library"))
+    cands.append(os.path.join(os.path.expanduser("~"), ".workbuddy", "skills", "library"))
+
+    del _LIB_TRIED[:]
+    seen = set()
+    for d in cands:
+        if not d or d in seen:
+            continue
+        seen.add(d)
+        _LIB_TRIED.append(d)
+        if hit(d):
+            return d
+    return ""
+
+
+def _lib_missing_msg():
+    return ("未找到 WorkBuddy library skill（该目录需含 space_api.py）。已探测：\n"
+            + "\n".join("  - " + p for p in _LIB_TRIED)
+            + "\n用环境变量 WORKBUDDY_LIBRARY_DIR=<library 目录> 指定后重试。")
+
+DEFAULT_LIB_DIR = _find_library_dir()
 DEFAULT_SPACE_ID = "lWmChDNEl28HPp3VjuY5W7"
 DEFAULT_FOLDER_ID = "ls82HtPIkKcX6Cv3AUGeVP"   # 个股报告
 DEFAULT_ARCHIVE_ID = "1PBO6txAv1MOq2nljCBvQM"  # 旧版归档
@@ -86,7 +131,7 @@ def load_lib_dir(cli_value: str | None) -> str:
     raise SystemExit(
         "[ERROR] 找不到资料库接口目录（space_api.py）。\n"
         "        用 --lib-dir <library skill 目录> 或设置环境变量 WORKBUDDY_LIBRARY_DIR。\n"
-        "        默认路径：%s" % DEFAULT_LIB_DIR
+        + _lib_missing_msg()
     )
 
 

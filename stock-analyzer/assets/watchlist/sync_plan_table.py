@@ -28,17 +28,63 @@ from datetime import datetime
 # 资料库「持仓与计划」表（投资空间 · 挂在观察池台账页内）
 PLAN_DB_ID = "LmhN0eFhk6hgXCjbOcSlaz"
 
-LIB = os.environ.get("WORKBUDDY_LIBRARY_DIR") or (
-    r"C:\Users\MrLi\AppData\Local\Programs\WorkBuddy\resources\app.asar.unpacked"
-    r"\resources\plugins\workbuddy-builtin\skills\library")
-if not os.path.isdir(LIB) or not os.path.exists(os.path.join(LIB, "space_api.py")):
-    raise SystemExit("资料库脚本目录不存在：%s（用 env WORKBUDDY_LIBRARY_DIR 指定）" % LIB)
+_LIB_TRIED = []
+
+
+def _find_library_dir():
+    """定位 WorkBuddy library skill 目录（需含 space_api.py）。
+
+    不写死用户名与安装路径：先认环境变量，再按相对位置往上找兄弟目录，
+    最后用系统的 LOCALAPPDATA / APPDATA / 用户主目录拼出内置与用户级安装位。
+    全部失败返回空串，调用方负责给清晰报错（见 _lib_missing_msg）。
+    """
+    def hit(p):
+        return bool(p) and os.path.isfile(os.path.join(p, "space_api.py"))
+
+    here = os.path.dirname(os.path.abspath(__file__))
+    cands = []
+    for env in ("WORKBUDDY_LIBRARY_DIR", "CODEBUDDY_SKILL_DIR"):
+        v = os.environ.get(env)
+        if v:
+            cands.extend((v, os.path.join(v, "library")))
+    root = here
+    for _ in range(4):
+        root = os.path.dirname(root)
+        cands.append(os.path.join(root, "library"))
+    for base in (os.environ.get("LOCALAPPDATA"), os.environ.get("APPDATA"),
+                 os.path.expanduser("~")):
+        if base:
+            cands.append(os.path.join(
+                base, "Programs", "WorkBuddy", "resources", "app.asar.unpacked",
+                "resources", "plugins", "workbuddy-builtin", "skills", "library"))
+    cands.append(os.path.join(os.path.expanduser("~"), ".workbuddy", "skills", "library"))
+
+    del _LIB_TRIED[:]
+    seen = set()
+    for d in cands:
+        if not d or d in seen:
+            continue
+        seen.add(d)
+        _LIB_TRIED.append(d)
+        if hit(d):
+            return d
+    return ""
+
+
+def _lib_missing_msg():
+    return ("未找到 WorkBuddy library skill（该目录需含 space_api.py）。已探测：\n"
+            + "\n".join("  - " + p for p in _LIB_TRIED)
+            + "\n用环境变量 WORKBUDDY_LIBRARY_DIR=<library 目录> 指定后重试。")
+
+LIB = _find_library_dir()
 
 SELF_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def _query(db_id: str) -> list:
     """分页拉取全表记录。"""
+    if not LIB:
+        raise SystemExit(_lib_missing_msg())
     out, cursor = [], None
     while True:
         args = [sys.executable, os.path.join(LIB, "database", "query_database_record.py"),
