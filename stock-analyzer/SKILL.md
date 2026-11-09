@@ -737,15 +737,28 @@ python <skill>/assets/verify_report.py "<报告.html>" --skill-dir <skill>
          持仓编辑），从 assets/watchlist/enhance/ 自动拼入，重建不再丢。换数据表用它
          `--database-id`，只在本地预览不上传时才 `--no-enhance`。
          计划持仓区默认读 `--manifest` 同目录的 `plan_table.json`，换位置用 `--plan-table`。
-④b 加施洛斯视图（可选，仅当这轮跑过施洛斯筛选）
-         python assets/watchlist/patch_schl_tab.py --html "<上一步产物>" --csv <筛选结果.csv> \
-             --funnel "5927:全 A,167:估值初筛,69:财务六关,38:九关全过" --metrics-date <YYYY-MM-DD>
-         已含该视图会自动跳过（幂等）。Tab 内容来自外部筛选 CSV，故不塞进渲染器。
+④b 施洛斯视图（自 2026-11-09 起**随渲染自动产出**，不再单独一步）
+         Tab 内容来自 `assets/watchlist/schl_result.json`（纳入版本管理）：A 级名单、
+         漏斗各层、口径日、每只一句话风险。换筛选批次就改这个 JSON。
+         缺该文件或页面锚点对不上时，渲染**硬失败**，绝不静默产出一份少了模块的台账；
+         只有本地预览才用 `--no-schl`（上传版绝不可用）。
+         兼容入口仍在（临时批次、不打算固化时）：
+         python assets/watchlist/patch_schl_tab.py --html "<台账>" --csv <临时.csv>
 ⑤ 体检   python assets/watchlist/check_ledger_skeleton.py --html "<上一步产物或改后的台账>" \
-             --stage upload
+             --stage render
          必须 LEDGER_SKELETON_RESULT: OK 才上传。FAIL 说明页面骨架被吃掉了一块，
-         按提示补完再回来跑。本地刚渲染的件用 `--stage render`：inject.js 是平台
-         上传时注入的，本地必然没有，该项标 SKIP 不算失败。
+         按提示补完再回来跑。本地件的 inject.js 是平台上传时注入，标 SKIP 不算失败。
+⑥ 上传   python assets/watchlist/safe_upload.py --html "<台账>" \
+             --node-block-id <台账节点ID> --space-id lWmChDNEl28HPp3VjuY5W7
+         **覆盖台账的唯一入口。** 它会：① 先拉线上当前版整包备份到
+         `<台账目录>/.tmp/lib-backup/<node>/v<N>-<时间>/`，拉不到就中止；
+         ② 比对 7 项受保护模块，线上有、新件没有的**直接 BLOCK**（退出码 4，
+         需 `--allow-module-loss` 才放行）；③ 上传；④ 回拉新版本再核一遍。
+         想看会丢什么：加 `--dry-run`，只备份 + 比对，不上传。
+         **不要直接调 page/import_html.py 覆盖台账** —— 它没有比对、不留备份，
+         语义就是「整页 blob 替换」，2026-11-09 施洛斯视图就是这么丢的。
+⑦ 复检   上传后对拉回件跑 `check_ledger_skeleton.py --stage upload`（唯一差别是
+         这一阶段要求 inject.js 也在位）。
 ```
 `--fresh-from` = 本批次起点日期（取 manifest 的 `fresh_from`），用于 KPI「本轮新增」与「NEW」标记的判定阈值；漏传会退化为沿用 `--prev-cutoff`，导致日期与标签串味。
 
@@ -754,7 +767,7 @@ python <skill>/assets/verify_report.py "<报告.html>" --skill-dir <skill>
 
 **overrides 纪律 / 归并口径 / 目录约定 / 上传后归档 / 全量盘查 / 踩坑固化**：见 `references/ledger_ops.md`。常踩的红线先记三条 —— overrides 只填在报告原文核对过的值；`alert` 字段没有真实行情事件就不写（不是备注栏）；**改 `assets/watchlist/` 任何脚本前必读踩坑固化**。
 
-**交付**：本地 HTML 双击可开（零 CDN、零外链），再用 `library` skill 的 `page/import_html.py` 上传到「个股报告」文件夹（`--space-id` + `--parent-id <report_folder_id>`）；上传前必须确认 HTML 内**无任何第三方 http(s) 资源**（import 有 image-hosting 外链门槛）。台账上传到 `parent_id`（「投资」根），覆盖更新用 `--node-block-id <台账节点ID>`，**不要传 `--file-name`**（不带扩展名会报「不支持的文件扩展名」）。
+**交付**：本地 HTML 双击可开（零 CDN、零外链）。个股报告用 `library` skill 的 `page/import_html.py` 上传到「个股报告」文件夹（`--space-id` + `--parent-id <report_folder_id>`）；上传前必须确认 HTML 内**无任何第三方 http(s) 资源**（import 有 image-hosting 外链门槛）。**台账不用它，用 `safe_upload.py`**：覆盖更新传 `--node-block-id <台账节点ID>`，**不要传 `--file-name`**（不带扩展名会报「不支持的文件扩展名」）。
 
 
 **交付前自检**（`build_watchlist.py` 会直接打印）：
@@ -806,11 +819,13 @@ python lib_reports.py archive --manifest <...> --node-id <旧版 id> --dry-run
 - `build_watchlist.py` —— 从 manifest 指定的报告里抽取结论字段，产出 `ledger_final.json`；带 `--prev` 时与上期快照比对生成「◆ 判定/期望价/胜率变化」标记，并把当前结果写回作为下期基线。同时打印自检清单（无判定 / A 类缺现价 / 缺链接 / 无结论横条需人工核对）。
 - `refresh_prices.py` —— **可选**：把现价刷成实时行情产出 `ledger_live.json`（渲染配 `--px-asof`）；**只改现价，期望价 / 胜率 / 观察买点不动**。细则见 `references/ledger_ops.md`「台账命名与现价刷新口径」。
 - `sync_plan_table.py` —— **计划持仓同步（2026-10-29 新增）**：资料库《持仓与计划》表 → `plan_table.json`。`pull` 落盘 + 打印对账告警，`check` 只对账。表是计划持仓的唯一真源，渲染只读缓存、不联网。真源分工与冲突判据见 `references/ledger_ops.md`「持仓与计划 Tab」。
-- `render_watchlist.py` —— 渲染零依赖离线 HTML 台账。**⚠️ 库端台账含「持仓与计划」Tab 时（manifest `positions` 段，2026-10-16 起），不得用本地整页渲染覆盖上传，须走库端行级补丁**；其余细则见 `references/ledger_ops.md`。
+- `render_watchlist.py` —— 渲染零依赖离线 HTML 台账。自 2026-11-09 起**自动注入施洛斯视图**（数据源 `schl_result.json`）与交互增强层，重建不再丢模块；缺数据源或锚点不符会硬失败。**⚠️ 库端台账含「持仓与计划」Tab 时（manifest `positions` 段，2026-10-16 起），不得用本地整页渲染直接覆盖上传，须走 `safe_upload.py`**；其余细则见 `references/ledger_ops.md`。
 - `check_ledger_gap.py` —— **台账的 audit（行级）**：本地根目录报告代码集 vs 库端台账 `data-k` 代码集，输出 `MISSING / STALE / EXTRA` 与 `LEDGER_GAP_RESULT: CLEAN|NEEDS_ACTION`（退出码 0/1/2）。支持 `--pull`（先拉最新库端台账）、`--ledger`（指定快照）、`--quiet`（只出结论行）。**每轮报告交付收尾必跑，`NEEDS_ACTION` 时不许报完成。** `STALE` 判据用胜率而非潜在空间，理由见脚本 docstring。
-- `check_ledger_skeleton.py` —— **台账的骨架体检（行之外的一切）**，与上一条互补：gap 管「该有的标的有没行、行里的数对不对」，本脚本管「智能页面在不在、数据表还连着没、＋还能不能加行」。三组判据 —— ① core：`h1` + 四个 `h2` 模块（全池总览 / 分区台账 / 复核时间轴 / 口径与设计说明）+ `zone zone--` + `WL_MODEL` + `#pxbar` + `qt.gtimg.cn` + `wl-theme`；② smart：`inject.js`（平台注入，render 阶段 SKIP）/ `#posSrc` + `data-sp-bindable` + `data-sp-database-id` / `.padd-mini`（CSS 与 JS 分开判）/ `posMask` / `addRecord` / `fetchAll` / `#view-pos` + `data-v="pos"`；③ optional：施洛斯 Tab。`--stage render|upload` 只影响 `inject.js` 一项（本地件必然没有），其余一律按有无判 FAIL，`--diff <基准>` 输出相对丢失项。**每次改台账后、上传前必跑**，判据设计理由见上一条交付前自检项。
+- `check_ledger_skeleton.py` —— **台账的骨架体检（行之外的一切）**，与上一条互补：gap 管「该有的标的有没行、行里的数对不对」，本脚本管「智能页面在不在、数据表还连着没、＋还能不能加行」。三组判据 —— ① core：`h1` + 四个 `h2` 模块（全池总览 / 分区台账 / 复核时间轴 / 口径与设计说明）+ `zone zone--` + `WL_MODEL` + `#pxbar` + `qt.gtimg.cn` + `wl-theme` + **施洛斯视图与 Tab（2026-11-09 由 optional 升为 core：渲染器已自带，缺了就是链路坏了）**；② smart：`inject.js`（平台注入，render 阶段 SKIP）/ `#posSrc` + `data-sp-bindable` + `data-sp-database-id` / `.padd-mini`（CSS 与 JS 分开判）/ `posMask` / `addRecord` / `fetchAll` / `#view-pos` + `data-v="pos"`；③ optional：预留，当前为空。`--stage render|upload` 只影响 `inject.js` 一项（本地件必然没有），其余一律按有无判 FAIL，`--diff <基准>` 输出相对丢失项。**每次改台账后、上传前必跑**，判据设计理由见上一条交付前自检项。
 - `assets/watchlist/enhance/` —— 交互增强层的三个真源文件（`enh.css` / `enh.js` / `pos_src.html`），渲染器读取后自动拼入页面。**改「＋」加行、持仓表单、数据表绑定行为就改这里**，别再写一次性补丁脚本；`@@ENH_DB_ID@@` 是数据表 id 占位符，由 `--database-id` 替换。
-- `patch_schl_tab.py` —— **给台账加「沃尔特施洛斯策略观察」视图**。`--html` 目标件、`--csv` 施洛斯筛选结果（需含 `层级` 列，取 `层级=A`）、`--funnel "5927:全 A,167:估值初筛,..."` 漏斗各层、`--metrics-date` 口径日期、`--notes` 覆盖每只的风险提示。已含 `id="view-schl"` 自动跳过（幂等），`--dry-run` 只报告不落盘。新视图一律 `schl-` 前缀类名，末尾断言在守「不得混入 `data-row`/`zone`/`zcard`/`wl`」这条 —— 一旦混入，A 级那几只会被算进观察池的 KPI 与分区计数。
+- `safe_upload.py` —— **台账覆盖上传的唯一入口（2026-11-09 新增，事故后护栏）**。四步：备份线上当前版整包 → 比对 7 项受保护模块（线上有、新件无 → BLOCK，退出码 4）→ 上传 → 回拉新版本复核。`--dry-run` 只备份 + 比对不上传。**为什么必须有它**：资料库的 `import_html.py --node-block-id` 语义就是整页 blob 替换，无 patch、无备份、无 diff；施洛斯视图与增强层就是这样被吃掉过一次。体积判据故意不用原始字节（线上件被注入 `data-page-node-id` / inject.js 会膨胀 50%–100%），改用去标签纯文本字数。
+- `schl_result.json` —— **施洛斯视图的唯一数据源（2026-11-09 起纳入版本管理）**。字段：`asof` 取数日、`funnel` 各层数量与层名、`rows` 每只的 `code/name/industry/pb/pe/roe/low52/dy/debt/note`。换筛选批次只改这里，渲染器自动重建 Tab。
+- `patch_schl_tab.py` —— 施洛斯视图的手工入口（**常规流程用不到**，渲染器已自带）。`--json` 缺省读同目录 `schl_result.json`；`--csv` 仍支持一次性批次（需含 `层级` 列，取 `层级=A`）；`--funnel` / `--metrics-date` 覆盖 JSON 里的漏斗与口径日。已含 `id="view-schl"` 自动跳过（幂等），`--dry-run` 只报告不落盘。新视图一律 `schl-` 前缀类名，末尾断言在守「不得混入 `data-row`/`zone`/`zcard`/`wl`」这条 —— 一旦混入，A 级那几只会被算进观察池的 KPI 与分区计数。
   - **配色三档**：标准（默认，卡面 `#f8fafc`）/ 护眼（暖纸低蓝光，卡面 `#f7f4ec`）/ 深色（夜间，卡面 `#1a1f28`）。切换器在 masthead 右上角，选择存 localStorage 键 `wl-theme`，`<head>` 内联脚本提前套用以防深色档闪白（FOUC）。三档共用同一套语义色，定义在 `:root`（= 标准档）/ `:root[data-theme="eye"]` / `:root[data-theme="dark"]`；标准档无独立覆盖块，`data-theme="std"` 时继承 `:root` 即该档效果。旧键值 `soft` 由 `<head>` 预置脚本映射为 `std`（首版「柔和 / 标准 / 深色」中的纯白档已并入标准档）。
   - 新增语义变量（2026-10-09 三档改造时补）：`--mast-eyebrow` / `--mast-glow` / `--tt-ink` / `--tt-on` —— masthead 上的 eyebrow 文字、右上角光晕、切换器按钮的常态与选中字色。原先这四处是硬编码，护眼档（暖褐头部）下蓝色会与整体暖调冲突。
   - ⚠️ **改配色时的硬约束**：任何"实心块背景"或"热力/弱化色"都必须走语义变量，**不可直接拿 `var(--ink-900)` 当背景**——深色档下 `--ink-900` 是近白色，配 `#fff` 文字会成白底白字。已备好的语义变量：`--solid`/`--on-solid`（排序选中态）、`--brand-fill`/`--on-brand`（chip 选中态，与当文字用的 `--brand` 分开取值，否则深色档浅蓝底白字只有约 2.5:1）、`--heat1~3-bg`/`--heat1~3-ink`（赔率矩阵）、`--dot-off`/`--dot-low`/`--dot-mid`/`--dot-mid-ink`（胜率点阵）、`--chg-bg`/`--chg-ink`（变化高亮）、`--mast-a/b/c`（头部渐变）。新增档位时对照这套清单逐项给值。

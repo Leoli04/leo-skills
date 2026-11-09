@@ -910,6 +910,11 @@ def main():
     # 只在「本地预览、确定不上传」时才关；上传版必须带增强层
     ap.add_argument('--no-enhance', action='store_true',
                     help='跳过交互增强层注入（仅本地预览用，上传版绝不可用）')
+    # 施洛斯视图数据源：缺省取脚本同目录 schl_result.json，随渲染自动产出
+    ap.add_argument('--schl-json', default='',
+                    help='施洛斯结果 JSON，缺省 assets/watchlist/schl_result.json')
+    ap.add_argument('--no-schl', action='store_true',
+                    help='不注入施洛斯视图（仅预览用；上传版会让该 Tab 消失）')
     a = ap.parse_args()
 
     man = {}
@@ -1053,6 +1058,24 @@ def main():
         print('enhancement: 已按 --no-enhance 跳过 —— 此文件不可上传')
     else:
         html, _ = inject_enhancement(html, load_enhancement(), a.database_id)
+
+    # 施洛斯视图：数据源是版本管理内的 schl_result.json，随渲染一次产出。
+    # 早先它靠一次性 CSV 事后 patch，重建台账就会整块丢失（2026-11-09 事故），
+    # 现在由渲染器自己推得出来，缺数据源／锚点不符一律硬失败，不静默产出残页。
+    if a.no_schl:
+        print('schl: 已按 --no-schl 跳过 —— 上传版绝不可用')
+    else:
+        _sj = a.schl_json or os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                          'schl_result.json')
+        if os.path.isfile(_sj):
+            import patch_schl_tab as _schl
+            _before = html
+            html = _schl.apply_to_html(html, json_path=_sj)
+            print('schl: 已注入 A 级视图（%s，+%d bytes）'
+                  % (os.path.basename(_sj), len(html) - len(_before)))
+        else:
+            print('! schl: 未找到 %s —— 台账将不含施洛斯视图；'
+                  '若这是有意为之请显式传 --no-schl' % _sj)
 
     io.open(a.out, 'w', encoding='utf-8').write(html)
     print('written %s | %d bytes | %d rows' % (a.out, len(html), n))

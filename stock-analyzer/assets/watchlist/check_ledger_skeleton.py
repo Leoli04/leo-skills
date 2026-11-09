@@ -105,7 +105,8 @@ def count_rows(body: str) -> tuple[int, int, int]:
 #
 # group:  core    = 任何一份台账都该有（渲染器就产出这些）
 #         smart   = 智能页面 / 数据表 / 增强层 / 持仓 Tab，render 阶段豁免
-#         optional= 后加的模块（施洛斯 Tab 这类），缺了只提示
+#         optional= 预留：后加模块缺了只提示。**慎用** —— 施洛斯视图挂在这组时
+#                   两条 WARN 被当成「可选模块本来就没有」，导致整块丢失（2026-11-09）
 # where:  body / style / script / any   —— 到哪个块里找
 # hint:   缺了怎么办（直接给动作，不给解释）
 
@@ -181,13 +182,16 @@ CHECKS = [
          arg='data-v="pos"', label="持仓 Tab 按钮",
          hint="有容器没按钮 = 这页永远切不过去"),
 
-    # ---- optional：后加模块，缺了不算坏 ----
-    dict(k="view_schl", group="optional", where="body", kind="token",
+    # ---- 施洛斯视图：自 2026-11-09 起由渲染器从 schl_result.json 直接产出，
+    #      因此从 optional 升为 core —— 缺了就是渲染链路坏了，不许再静默放过。
+    #      （事故当天它挂在 optional 组，所以 2 条 WARN 被当成「可选模块本来就没有」）
+    dict(k="view_schl", group="core", where="body", kind="token",
          arg='id="view-schl"', label="施洛斯策略观察视图",
-         hint="11-07 新增；缺失说明这次重建把它吃了，重跑 _schl_tab_patch.py"),
-    dict(k="tab_schl", group="optional", where="body", kind="token",
+         hint="渲染器应自带；缺了先看 render_watchlist.py 是否打了 "
+              "「schl: 已注入」，再查 assets/watchlist/schl_result.json 是否存在"),
+    dict(k="tab_schl", group="core", where="body", kind="token",
          arg='data-v="schl"', label="施洛斯 Tab 按钮",
-         hint="同上"),
+         hint="有视图无按钮 = 这页永远切不过去；同上先查 schl_result.json"),
 ]
 
 
@@ -264,6 +268,8 @@ def report(html: str, path: str, stage: str, quiet: bool) -> int:
               ("optional", "③ 后加模块（缺了只提示）")]
     for gk, title in groups:
         items = [r for r in res if r["group"] == gk]
+        if not items:
+            continue
         shown = [(r, level_of(r, stage)) for r in items]
         bad = [x for x in shown if x[1] not in ("PASS", "SKIP")]
         if not quiet:
