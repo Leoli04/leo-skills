@@ -1474,7 +1474,7 @@ var t=m[localStorage.getItem('wl-theme')];if(t){document.documentElement.setAttr
 </header>
 
 <div class="pxbar" id="pxbar">
-  <button type="button" class="pxbtn" id="px-refresh">↻ 刷新现价</button>
+  <button type="button" class="pxbtn" id="px-refresh">↻ 刷新数据与现价</button>
   <span class="pxst" id="px-status">现价为 <b>@@PX_SNAP@@</b> 快照 · 点左侧按钮可拉实时行情并重算全部派生统计</span>
   <label class="pxauto"><input type="checkbox" id="px-auto"> 交易时段每 60s 自动刷新</label>
   <span class="pxmsg" id="px-msg"></span>
@@ -2133,6 +2133,8 @@ var WL_MODEL = @@PX_MODEL@@;</script>
           MSG.className = 'pxmsg is-err';
           MSG.textContent = '行情取不到（离线 / 被浏览器拦截 / 非交易时段），仍显示 ' + M.asof + ' 快照';
         }
+        /* 行情失败也照样重查数据表：离线时用户最想确认的是持仓有没有变 */
+        if(window.__wlAfterPx){ try{ window.__wlAfterPx(); }catch(e){} }
         return;
       }
       var updated = applyQuotes(got);
@@ -2145,6 +2147,8 @@ var WL_MODEL = @@PX_MODEL@@;</script>
         MSG.textContent = '更新 ' + updated + ' 只' +
           (failed ? '（' + failed + ' 批失败）' : '') + ' · ' + new Date().toTimeString().slice(0, 8);
       }
+      /* 取价完成后重查数据表：刷新按钮要同时管「价」和「持仓」，见 enh.js __wlAfterPx */
+      if(window.__wlAfterPx){ try{ window.__wlAfterPx(); }catch(e){} }
     });
   }
   function inSession(d){

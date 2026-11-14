@@ -758,6 +758,44 @@
     if (src) { src.textContent = '快照（未连表）'; }
   }
 
+  /* ── 刷新按钮联动数据表（2026-11-14）──────────────────────────────
+     「↻ 刷新」原来只取行情价：持仓股数 / 成本 / 状态仍停在页面加载时的
+     数据表快照，post-price 的 patchPositions 又只认模板静态模型 M.pos，
+     enh 渲染的行没有 data-f 钩子 → 改完数据表点刷新看不出任何变化。
+     现在取价回调末尾重查一次数据表并重渲染持仓；现价从已刷新的观察池
+     DOM 回读写回 BYCODE，行里的价因此是最新价而不是旧快照。
+     挂钩点在 render_watchlist.py 的 refresh()：window.__wlAfterPx()。 */
+  function syncIdxPx() {
+    IDX.forEach(function (it) {
+      if (!it.el || !document.body.contains(it.el)) { return; }
+      var px = null;
+      if (it.card) {
+        px = n1(t(q('.zcard__kv dd.n', it.el)).split('→')[0]);
+      } else {
+        px = n1(t(q('.pb__c', it.el)));
+      }
+      if (px !== null) { it.px = px; }
+    });
+    BYCODE = {};
+    IDX.forEach(function (it) { if (it.code) { BYCODE[it.code] = it; } });
+  }
+  function reloadPos() {
+    if (!db) { return; }
+    try { syncIdxPx(); } catch (e) {}
+    loadPos();
+  }
+  var pxFired = false;
+  window.__wlAfterPx = function () { pxFired = true; reloadPos(); };
+  (function () {
+    var btn = document.getElementById('px-refresh');
+    if (!btn) { return; }
+    /* 兜底：取价通道整批静默失败时回调可能不触发，3s 后仍补一次持仓重查 */
+    btn.addEventListener('click', function () {
+      pxFired = false;
+      setTimeout(function () { if (!pxFired) { reloadPos(); } }, 3000);
+    });
+  })();
+
   function initPos() {
     if (!db) { markOffline(); return; }
     db.getSchema({ databaseId: DATABASE_ID }).then(function (schema) {
