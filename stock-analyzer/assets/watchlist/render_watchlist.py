@@ -2407,8 +2407,10 @@ var WL_MODEL = @@PX_MODEL@@;</script>
   /* ── 快照持久化：云端表为主、localStorage 兜底 ────────────────────
      刷新只改内存与 DOM，关掉页面就回到静态快照。现在每次成功取价都会
      写一份到资料库快照表（换设备、换浏览器也看得到），同时在本机留一份
-     兜底，断网或没连上表时重开也不至于退回旧价。静态快照日期追平或超过
-     快照日期时自动弃用快照，免得重新渲染上传后还被旧数据盖住。 */
+     兜底，断网或没连上表时重开也不至于退回旧价。只有静态数据时点严格
+     **晚于**快照日期时才弃用快照（重新渲染并推进 asof 后不被旧价盖住）；
+     快照日期与 asof 同日则保留——asof 通常正是最后一个交易日，做成「追平
+     即弃用」会让刚点完刷新、一按 F5 就退回报告正文里的旧价（2026-11-15）。 */
   var SNAP_KEY = 'wl-pxsnap';
   var SNAP_DAYS = 7;
 
@@ -2442,7 +2444,9 @@ var WL_MODEL = @@PX_MODEL@@;</script>
   function snapStale(o){
     if(!o || !o.px) return true;
     var base = asofDate();
-    if(base && o.date && o.date <= base) return true;
+    /* 严格早于 asof 才算过期。原先写成 <=，把「快照正好落在 asof 当天」
+       一并判过期，而 asof 通常就是最后交易日 —— 刷新完按 F5 就回退。 */
+    if(base && o.date && o.date < base) return true;
     if(o.saved && (Date.now() - o.saved) > SNAP_DAYS * 864e5) return true;
     return false;
   }
