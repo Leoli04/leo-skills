@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import json
 import os
 import re
 import sys
@@ -180,6 +181,11 @@ CHECKS = [
     dict(k="tab_pos", group="smart", where="body", kind="token",
          arg='data-v="pos"', label="持仓 Tab 按钮",
          hint="有容器没按钮 = 这页永远切不过去"),
+    dict(k="wl_model", group="smart", where="script", kind="json_model",
+         arg="var WL_MODEL", label="页内数据模型 WL_MODEL 可解析",
+         hint="WL_MODEL 不是合法 JSON → 刷新模块在 `if(!M || !M.rows) return;` 静默返回，"
+              "「刷新数据与现价」按钮根本没绑 click，点了毫无反应；"
+              "用 python 对 `var WL_MODEL = {...}` 跑一次 raw_decode 定位坏键"),
 
     # ---- optional：后加模块，缺了不算坏 ----
     dict(k="view_schl", group="optional", where="body", kind="token",
@@ -206,6 +212,30 @@ def evaluate(html: str) -> list[dict]:
     for c in CHECKS:
         hay = pool[c["where"]]
         n = 0
+        if c["kind"] == "json_model":
+            # 页内数据模型整段 JSON：坏键（如 `"tpl":"tpl":{` 这种重复键）会让
+            # 整段语法错。页面静态统计都写在 HTML 里，肉眼看不出来，只有交互会死
+            # —— 2026-11-15 线上故障就是这个，刷新按钮点了完全没反应。
+            ok, found = False, ""
+            for seg in scripts:
+                i = seg.find(c["arg"])
+                if i < 0:
+                    continue
+                b = seg.find("{", i)
+                try:
+                    obj, _ = json.JSONDecoder().raw_decode(seg[b:])
+                except Exception as e:
+                    found = "JSON 语法错：%s" % e
+                    break
+                ok = True
+                n = len(obj.get("rows") or [])
+                found = "rows=%d · pos=%d 只 · tpl=%d 键" % (
+                    n, len(obj.get("pos") or {}), len(obj.get("tpl") or {}))
+                break
+            if not found:
+                found = "未找到 %s" % c["arg"]
+            results.append(dict(c, ok=ok, n=n, found=found))
+            continue
         if c["kind"] == "heading":
             ok = has_heading(hs, c["level"], c["arg"])
         elif c["kind"] == "regex":
