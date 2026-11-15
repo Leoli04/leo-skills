@@ -883,7 +883,7 @@
       var rows = (res && res.results) || [];
       if (!rows.length) { return null; }
       var r = rows[0];
-      snapRid = r['_id'] || r.id || r.recordId || r.record_id || null;
+      snapRid = recordId(r) || null;
       var px = snapParsePx(r['价格数据']);
       if (!px) { return null; }
       return { date: r['快照日期'] || '', label: r['行情时间'] || '', px: px, saved: Date.now() };
@@ -909,7 +909,7 @@
       job = db.updateRecord({ databaseId: SNAP_DB, recordId: snapRid, properties: props });
     } else {
       job = db.addRecord({ databaseId: SNAP_DB, properties: props }).then(function (r) {
-        snapRid = (r && (r['_id'] || r.id || r.recordId)) || snapRid;
+        snapRid = recordId(r) || snapRid;
         return r;
       });
     }
