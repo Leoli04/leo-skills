@@ -186,6 +186,10 @@ CHECKS = [
          hint="WL_MODEL 不是合法 JSON → 刷新模块在 `if(!M || !M.rows) return;` 静默返回，"
               "「刷新数据与现价」按钮根本没绑 click，点了毫无反应；"
               "用 python 对 `var WL_MODEL = {...}` 跑一次 raw_decode 定位坏键"),
+    dict(k="no_placeholder", group="smart", where="any", kind="no_placeholder",
+         arg=r'@@[A-Z_]+@@', label="无未替换的 @@ 占位符",
+         hint="渲染器或手工注入漏替换 @@ENH_DB_ID@@ / @@ENH_SNAP_DB@@，"
+              "持仓联动与快照读写会带着非法 id 发请求：页面看着正常，功能全静默失效"),
 
     # ---- optional：后加模块，缺了不算坏 ----
     dict(k="view_schl", group="optional", where="body", kind="token",
@@ -234,6 +238,13 @@ def evaluate(html: str) -> list[dict]:
                 break
             if not found:
                 found = "未找到 %s" % c["arg"]
+            results.append(dict(c, ok=ok, n=n, found=found))
+            continue
+        if c["kind"] == "no_placeholder":
+            hits = re.findall(c["arg"], hay)
+            n = len(hits)
+            ok = (n == 0)
+            found = ("无" if ok else "残留：" + ",".join(sorted(set(hits)))[:80])
             results.append(dict(c, ok=ok, n=n, found=found))
             continue
         if c["kind"] == "heading":

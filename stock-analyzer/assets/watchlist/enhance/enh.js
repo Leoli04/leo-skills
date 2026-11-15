@@ -851,12 +851,99 @@
     }, true);
   }
 
+  /* ── 观察池现价快照（跨设备）──────────────────────────────────────
+     刷新模块（页面脚本 4）取到新价后调 window.__wlSnapCloud 写到这张表；
+     打开页面时这里把它读回来交给 __wlPxSnap.apply 套用，换电脑也看得到。
+     表只存价格与时间，不碰观察池的业务字段——分区/胜率仍以静态 HTML 为
+     真源，避免同一件事有两个真源。 */
+  var SNAP_DB = '@@ENH_SNAP_DB@@';
+  var snapRid = null;
+  var snapTried = false;
+  var snapSaving = false;
+
+  function snapReady() {
+    return !!(db && SNAP_DB && SNAP_DB.indexOf('@@') !== 0);
+  }
+  function snapParsePx(v) {
+    if (!v) { return null; }
+    if (typeof v === 'string') {
+      try { return JSON.parse(v); } catch (e) { return null; }
+    }
+    return (typeof v === 'object') ? v : null;
+  }
+  function nowStamp() {
+    var d = new Date();
+    function p2(n) { return ('0' + n).slice(-2); }
+    return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()) +
+      ' ' + p2(d.getHours()) + ':' + p2(d.getMinutes());
+  }
+  function snapReadCloud() {
+    if (!snapReady()) { return Promise.resolve(null); }
+    return db.query({ databaseId: SNAP_DB, pageSize: 10 }).then(function (res) {
+      var rows = (res && res.results) || [];
+      if (!rows.length) { return null; }
+      var r = rows[0];
+      snapRid = r['_id'] || r.id || r.recordId || r.record_id || null;
+      var px = snapParsePx(r['价格数据']);
+      if (!px) { return null; }
+      return { date: r['快照日期'] || '', label: r['行情时间'] || '', px: px, saved: Date.now() };
+    }).catch(function (err) {
+      if (window.console) { console.warn('[pxsnap] 读云端快照失败', err); }
+      return null;
+    });
+  }
+  function snapWriteCloud(o) {
+    if (!snapReady() || snapSaving) { return; }
+    var px = snapParsePx(o.px) || o.px;
+    if (!px || typeof px !== 'object') { return; }
+    snapSaving = true;
+    var props = {
+      '快照日期': { text: o.date || '' },
+      '行情时间': { text: o.label || '' },
+      '更新时间': { text: nowStamp() },
+      '只数': { number: o.count || Object.keys(px).length },
+      '价格数据': { text: JSON.stringify(px) }
+    };
+    var job;
+    if (snapRid) {
+      job = db.updateRecord({ databaseId: SNAP_DB, recordId: snapRid, properties: props });
+    } else {
+      job = db.addRecord({ databaseId: SNAP_DB, properties: props }).then(function (r) {
+        snapRid = (r && (r['_id'] || r.id || r.recordId)) || snapRid;
+        return r;
+      });
+    }
+    Promise.resolve(job).then(function () { snapSaving = false; })
+      .catch(function (err) {
+        snapSaving = false;
+        if (window.console) { console.warn('[pxsnap] 写云端快照失败', err); }
+      });
+  }
+  function snapDropCloud() {
+    if (!snapReady() || !snapRid) { return; }
+    try { db.deleteRecord({ databaseId: SNAP_DB, recordId: snapRid }); } catch (e) { /* 忽略 */ }
+    snapRid = null;
+  }
+  window.__wlSnapCloud = snapWriteCloud;
+  window.__wlSnapClear = snapDropCloud;
+
+  function initSnap() {
+    if (snapTried) { return; }
+    snapTried = true;
+    snapReadCloud().then(function (o) {
+      if (!o || !window.__wlPxSnap) { return; }
+      if (window.__wlPxSnap.stale(o)) { return; }
+      window.__wlPxSnap.apply(o);
+    });
+  }
+
   function boot() {
     try {
       buildIndex();
       initPadd();
       initPosActions();
       initPos();
+      initSnap();
     } catch (err) {
       if (window.console) { console.error('[plan] boot failed', err); }
     }

@@ -756,7 +756,8 @@ def positions_html(positions, rows_by_code):
 #  enhance/ 下的文件，渲染时自动拼进去，重建不再丢。
 HERE = os.path.dirname(os.path.abspath(__file__))
 ENH_DIR = os.path.join(HERE, 'enhance')
-DEFAULT_DB_ID = 'LmhN0eFhk6hgXCjbOcSlaz'        # 「投资观察池台账」数据表
+DEFAULT_DB_ID = 'LmhN0eFhk6hgXCjbOcSlaz'        # 「投资观察池台账」数据表（持仓计划）
+DEFAULT_SNAP_DB_ID = 'X2d22QAZzAa8q6upyuuDAs'   # 「观察池现价快照」数据表（刷新价跨设备持久化）
 # 增强标记挂在持仓面板的这句副标题之后 —— 与历史版本位置一致
 POS_SRC_ANCHOR = ('<span class="panel__d">实际持仓口径 · 现价与观察池行情联动 · '
                   '计划为既定纪律非即时建议</span>')
@@ -774,14 +775,20 @@ def load_enhancement():
     return parts
 
 
-def inject_enhancement(html, parts, db_id):
+def inject_enhancement(html, parts, db_id, snap_db_id=DEFAULT_SNAP_DB_ID):
     """把增强层三块拼进页面，每处锚点断言命中 1 次。已注入则跳过（幂等）。"""
     if 'id="enh-style"' in html:
         print('enhancement: 已存在，跳过注入')
         return html, False
     css = parts['css'].replace('@@ENH_DB_ID@@', db_id)
-    js = parts['js'].replace('@@ENH_DB_ID@@', db_id)
+    js = parts['js'].replace('@@ENH_DB_ID@@', db_id).replace('@@ENH_SNAP_DB@@', snap_db_id)
     pos_src = parts['pos_src'].replace('@@ENH_DB_ID@@', db_id)
+    if '@@ENH_DB_ID@@' in js or '@@ENH_SNAP_DB@@' in js:
+        raise SystemExit('! 增强脚本仍残留 @@ 占位符——数据表 id 没替换干净，'
+                         '持仓/快照总线都会带非法 id。')
+    # 快照表的静态绑定声明：平台据此放行 enh.js 对这张表的读写
+    snap_src = ('\n<div id="pxSnapSrc" data-sp-bindable="database" '
+                'data-sp-database-id="%s" hidden></div>' % snap_db_id)
 
     def _one(hay, needle, what):
         c = hay.count(needle)
@@ -796,11 +803,11 @@ def inject_enhancement(html, parts, db_id):
 
     html = html.replace('</head>',
                         '<style id="enh-style">\n' + css + '</style>\n</head>', 1)
-    html = html.replace(POS_SRC_ANCHOR, POS_SRC_ANCHOR + pos_src, 1)
+    html = html.replace(POS_SRC_ANCHOR, POS_SRC_ANCHOR + pos_src + snap_src, 1)
     html = html.replace('</body>',
                         '<script id="enh-script">' + js + '</script>\n</body>', 1)
-    print('enhancement: css %d + pos_src %d + js %d chars'
-          % (len(css), len(pos_src), len(js)))
+    print('enhancement: css %d + pos_src %d + snap_src %d + js %d chars'
+          % (len(css), len(pos_src), len(snap_src), len(js)))
     return html, True
 
 
@@ -818,6 +825,7 @@ def main():
     ap.add_argument('--manifest', default='')
     # 数据表 id：写进 #posSrc 与增强脚本，决定「＋」加到哪张表
     ap.add_argument('--database-id', default=DEFAULT_DB_ID)
+    ap.add_argument('--snap-database-id', default=DEFAULT_SNAP_DB_ID)
     # 只在「本地预览、确定不上传」时才关；上传版必须带增强层
     ap.add_argument('--no-enhance', action='store_true',
                     help='跳过交互增强层注入（仅本地预览用，上传版绝不可用）')
@@ -949,7 +957,7 @@ def main():
     if a.no_enhance:
         print('enhancement: 已按 --no-enhance 跳过 —— 此文件不可上传')
     else:
-        html, _ = inject_enhancement(html, load_enhancement(), a.database_id)
+        html, _ = inject_enhancement(html, load_enhancement(), a.database_id, a.snap_database_id)
 
     io.open(a.out, 'w', encoding='utf-8').write(html)
     print('written %s | %d bytes | %d rows' % (a.out, len(html), n))
@@ -2048,38 +2056,124 @@ var WL_MODEL = @@PX_MODEL@@;</script>
   }
 
   /* ── 取价 ─────────────────────────────────────────────────────── */
-  function loadQuotes(codes, done){
-    var batches = [], i, got = {}, left = 0, failed = 0;
-    for(i = 0; i < codes.length; i += 30) batches.push(codes.slice(i, i + 30));
-    if(!batches.length){ done(got, 0); return; }
-    left = batches.length;
-    function settle(ok){
-      if(!ok) failed++;
-      left--;
-      if(left === 0) done(got, failed);
+  /* 记 CSP 拦截。fetch 被策略拦下时只会抛 "Failed to fetch"，和断网、
+     证书错误完全同形；只有 securitypolicyviolation 事件能说出「是哪条指令
+     拦的」。宿主页（资料库/预览）各套各的策略，必须能分辨。 */
+  var CSPHIT = [];
+  if(document.addEventListener){
+    document.addEventListener('securitypolicyviolation', function(e){
+      var host = (e.blockedURI || '').replace(/^https?:\/\//, '').split('/')[0];
+      CSPHIT.push((e.violatedDirective || 'CSP').split(' ')[0] + ' 拦 ' + (host || '?'));
+    }, true);
+  }
+  /* 取价走两条互相独立的通道，先 fetch 再用 script 兜底（2026-11-09 补）。
+     原实现只有 script 一条：把 `v_sh600742="…"` 当 JS 执行，再从 window 读全局。
+     本条在本地 file:// 实测正常，但在资料库/预览的宿主页里可整批静默失败，且失败
+     原因被压成一句「行情取不到」，看不出是网络、CSP 还是 MIME 不可执行。
+     实测：本地 file:// 两条都通；预览面板 connect-src 拦住 fetch、script 仍通。
+     故两条都留，任一拿到即算成功，并如实回报走了哪条、为何失败。 */
+  var QUOTE_URL = 'https://qt.gtimg.cn/q=';
+  function gbkDecode(buf){
+    try{ return new TextDecoder('gbk').decode(buf); }
+    catch(e){
+      /* TextDecoder 不支持 gbk 时退到 latin1：价格与时间戳都是 ASCII，仍能解析，
+         只有中文名会乱——行情名本页不用，显示名称取自台账自带字段。 */
+      var v = new Uint8Array(buf), s = '', i;
+      for(i = 0; i < v.length; i++) s += String.fromCharCode(v[i]);
+      return s;
     }
-    batches.forEach(function(b){
-      var s = document.createElement('script');
-      s.charset = 'gbk';
-      var ids = b.map(secid);
-      s.src = 'https://qt.gtimg.cn/q=' + ids.join(',');
-      var done1 = false;
-      function once(ok){ if(done1) return; done1 = true; settle(ok); }
-      s.onload = function(){
-        for(var j = 0; j < b.length; j++){
-          var raw = window['v_' + ids[j]];
-          if(!raw) continue;
-          var f = String(raw).split('~');
-          var px = parseFloat(f[3]);
-          if(!px || px <= 0) continue;
-          got[b[j]] = { px: px, str: px.toFixed(2), ts: f[30] || '',
-                        chg: isNaN(parseFloat(f[32])) ? null : parseFloat(f[32]) };
+  }
+  function takeQuote(code, fields, got){
+    var px = parseFloat(fields[3]);
+    if(!px || px <= 0) return 0;
+    got[code] = { px: px, str: px.toFixed(2), ts: fields[30] || '',
+                  chg: isNaN(parseFloat(fields[32])) ? null : parseFloat(fields[32]) };
+    return 1;
+  }
+  function parseQuoteText(txt, codes, got){
+    var byId = {}, i, n = 0, m;
+    for(i = 0; i < codes.length; i++) byId[secid(codes[i])] = codes[i];
+    var re = /v_([A-Za-z0-9]+)="([^"]*)"/g;
+    while((m = re.exec(txt))){
+      if(!byId[m[1]]) continue;
+      n += takeQuote(byId[m[1]], m[2].split('~'), got);
+    }
+    return n;
+  }
+  function fetchBatch(ids, codes, got){
+    if(typeof fetch !== 'function') return Promise.reject(new Error('浏览器无 fetch'));
+    var ctl = (typeof AbortController === 'function') ? new AbortController() : null;
+    var timer = ctl ? setTimeout(function(){ ctl.abort(); }, 8000) : null;
+    var opt = { cache: 'no-store', credentials: 'omit' };
+    if(ctl) opt.signal = ctl.signal;
+    return fetch(QUOTE_URL + ids.join(','), opt).then(function(r){
+      if(!r.ok) throw new Error('HTTP ' + r.status);
+      return r.arrayBuffer();
+    }).then(function(buf){
+      if(timer) clearTimeout(timer);
+      return parseQuoteText(gbkDecode(buf), codes, got);
+    }).catch(function(e){
+      if(timer) clearTimeout(timer);
+      throw e;
+    });
+  }
+  /* 失败原因去重后再报：4 个批次会把同一个错重复 4 次，粘到页面上没意义 */
+  function uniqReasons(list, max){
+    var out = [], i;
+    for(i = 0; i < list.length; i++){
+      if(out.indexOf(list[i]) < 0) out.push(list[i]);
+      if(out.length >= (max || 3)) break;
+    }
+    return out.join('；');
+  }
+  /* done(got, failed, via, detail)
+     via = fetch | script | none；detail = 失败原因（成功时为 ''） */
+  function loadQuotes(codes, done){
+    var batches = [], i, got = {}, reasons = [];
+    for(i = 0; i < codes.length; i += 30) batches.push(codes.slice(i, i + 30));
+    if(!batches.length){ done(got, 0, 'none', ''); return; }
+
+    function viaScript(){
+      var left = batches.length;
+      batches.forEach(function(b){
+        var ids = b.map(secid), s = document.createElement('script'), fin = false;
+        s.charset = 'gbk';
+        s.src = QUOTE_URL + ids.join(',');
+        function once(ok, why){
+          if(fin) return;
+          fin = true;
+          if(!ok) reasons.push('script ' + why);
+          if(--left > 0) return;
+          if(Object.keys(got).length){
+            done(got, 0, 'script', '');
+          }else{
+            if(!reasons.length) reasons.push('script 无数据');
+            done({}, batches.length, 'none', uniqReasons(CSPHIT.concat(reasons), 3));
+          }
         }
-        once(true);
-      };
-      s.onerror = function(){ once(false); };
-      setTimeout(function(){ once(false); }, 9000);
-      document.head.appendChild(s);
+        s.onload = function(){
+          var j, hit = 0;
+          for(j = 0; j < b.length; j++){
+            var raw = window['v_' + ids[j]];
+            if(raw) hit += takeQuote(b[j], String(raw).split('~'), got);
+          }
+          if(!hit) reasons.push('script 已加载但无 v_ 变量');
+          once(true);
+        };
+        s.onerror = function(){ once(false, '加载失败'); };
+        setTimeout(function(){ once(false, '超时 9s'); }, 9000);
+        document.head.appendChild(s);
+      });
+    }
+
+    Promise.all(batches.map(function(b){
+      return fetchBatch(b.map(secid), b, got).catch(function(e){
+        reasons.push('fetch ' + ((e && e.message) || e));
+        return 0;
+      });
+    })).then(function(){
+      if(Object.keys(got).length){ done(got, 0, 'fetch', ''); return; }
+      viaScript();
     });
   }
   function applyQuotes(got){
@@ -2123,17 +2217,24 @@ var WL_MODEL = @@PX_MODEL@@;</script>
     if(MSG){ MSG.className = 'pxmsg'; MSG.textContent = '正在获取行情…'; }
     var codes = M.rows.map(function(r){ return r.c; });
     for(var k in M.pos){ if(M.pos.hasOwnProperty(k) && codes.indexOf(k) < 0) codes.push(k); }
-    loadQuotes(codes, function(got, failed){
+    loadQuotes(codes, function(got, failed, via, detail){
       busy = false;
       if(BTN) BTN.disabled = false;
       var n = 0, kk;
       for(kk in got){ if(got.hasOwnProperty(kk)) n++; }
       if(!n){
+        /* 失败原因照实写出来，别再让「离线 / 被拦截 / 非交易时段」这种三选一
+           猜测充当诊断——下次出问题要看得出是 fetch 被拒还是 script 被拦。 */
+        if(typeof console !== 'undefined' && console.warn){
+          console.warn('[wl] 取价失败：' + (detail || '无详情'));
+        }
         if(MSG){
           MSG.className = 'pxmsg is-err';
-          MSG.textContent = '行情取不到（离线 / 被浏览器拦截 / 非交易时段），仍显示 ' + M.asof + ' 快照';
+          MSG.textContent = '行情取不到（' + (detail || '离线 / 被浏览器拦截 / 非交易时段') +
+                            '），仍显示 ' + M.asof + ' 快照';
+          MSG.title = '取价通道：fetch（CORS）与 script 均未返回数据。明细：' +
+                       (detail || '无');
         }
-        /* 行情失败也照样重查数据表：离线时用户最想确认的是持仓有没有变 */
         if(window.__wlAfterPx){ try{ window.__wlAfterPx(); }catch(e){} }
         return;
       }
@@ -2142,14 +2243,116 @@ var WL_MODEL = @@PX_MODEL@@;</script>
       patchPositions();
       if(window.__wlSort) window.__wlSort();
       if(ST) ST.innerHTML = '现价为 <b>' + stamp() + '</b> 实时行情 · 已重算潜在空间 / 距买点 / 分布 / 矩阵 / 持仓';
+      snapSave();
       if(MSG){
         MSG.className = 'pxmsg';
+        MSG.title = '取价通道：' + (via === 'script' ? 'script 标签（fetch 未取到）' : 'fetch（CORS）');
         MSG.textContent = '更新 ' + updated + ' 只' +
           (failed ? '（' + failed + ' 批失败）' : '') + ' · ' + new Date().toTimeString().slice(0, 8);
       }
-      /* 取价完成后重查数据表：刷新按钮要同时管「价」和「持仓」，见 enh.js __wlAfterPx */
       if(window.__wlAfterPx){ try{ window.__wlAfterPx(); }catch(e){} }
     });
+  }
+  /* ── 快照持久化：云端表为主、localStorage 兜底 ────────────────────
+     刷新只改内存与 DOM，关掉页面就回到静态快照。现在每次成功取价都会
+     写一份到资料库快照表（换设备、换浏览器也看得到），同时在本机留一份
+     兜底，断网或没连上表时重开也不至于退回旧价。静态快照日期追平或超过
+     快照日期时自动弃用快照，免得重新渲染上传后还被旧数据盖住。 */
+  var SNAP_KEY = 'wl-pxsnap';
+  var SNAP_DAYS = 7;
+
+  function asofDate(){
+    var m = /(\d{4}-\d{2}-\d{2})/.exec(M.asof || '');
+    return m ? m[1] : '';
+  }
+  function snapClear(){
+    try{ localStorage.removeItem(SNAP_KEY); }catch(e){}
+  }
+  function snapPayload(){
+    var px = {}, k, n = 0;
+    for(k in PX){
+      if(!PX.hasOwnProperty(k)) continue;
+      if(!PX[k] || !PX[k].px) continue;
+      px[k] = { px: PX[k].px, str: PX[k].str, chg: PX[k].chg, ts: PX[k].ts };
+      n++;
+    }
+    if(!n) return null;
+    var lab = stamp();
+    var dm = /(\d{4}-\d{2}-\d{2})/.exec(lab);
+    return { date: dm ? dm[1] : asofDate(), label: lab, count: n, px: px };
+  }
+  function snapSave(){
+    var o = snapPayload();
+    if(!o) return;
+    o.saved = Date.now();
+    try{ localStorage.setItem(SNAP_KEY, JSON.stringify(o)); }catch(e){}
+    if(window.__wlSnapCloud){ try{ window.__wlSnapCloud(o); }catch(e){} }
+  }
+  function snapStale(o){
+    if(!o || !o.px) return true;
+    var base = asofDate();
+    if(base && o.date && o.date <= base) return true;
+    if(o.saved && (Date.now() - o.saved) > SNAP_DAYS * 864e5) return true;
+    return false;
+  }
+  function snapLoad(){
+    var raw = null;
+    try{ raw = localStorage.getItem(SNAP_KEY); }catch(e){ return null; }
+    if(!raw) return null;
+    var o = null;
+    try{ o = JSON.parse(raw); }catch(e){ snapClear(); return null; }
+    if(!o || !o.px || !o.date) return null;
+    if(snapStale(o)){ snapClear(); return null; }
+    return o;
+  }
+  function snapStatus(o, src){
+    if(!ST) return;
+    var where = (src === 'cloud') ? '云端快照' : '本机缓存';
+    ST.innerHTML = '现价为 <b>' + (o.label || o.date) + '</b> ' + where +
+      ' · 已按该价重算 · <a id="px-snap-clear" role="button" tabindex="0" ' +
+      'style="text-decoration:underline;cursor:pointer">清除快照，回到静态数据</a>';
+    var a = document.getElementById('px-snap-clear');
+    if(a){
+      a.addEventListener('click', function(e){
+        if(e && e.preventDefault) e.preventDefault();
+        snapClear();
+        if(window.__wlSnapClear){ try{ window.__wlSnapClear(); }catch(err){} }
+        setTimeout(function(){ try{ location.reload(); }catch(err){} }, 300);
+      });
+    }
+  }
+  function applySnap(o, src){
+    if(!o || !o.px) return false;
+    var got = {}, k, n = 0;
+    for(k in o.px){
+      if(!o.px.hasOwnProperty(k)) continue;
+      if(!o.px[k] || !o.px[k].px) continue;
+      if(!PX[k]) PX[k] = { px:0, str:'—', chg:null };
+      PX[k].px = o.px[k].px;
+      PX[k].str = o.px[k].str;
+      PX[k].chg = o.px[k].chg;
+      PX[k].ts = o.px[k].ts;
+      got[k] = o.px[k];
+      n++;
+    }
+    if(!n) return false;
+    applyQuotes(got);
+    fillAll();
+    patchPositions();
+    if(window.__wlSort) window.__wlSort();
+    snapStatus(o, src);
+    return true;
+  }
+  /* 增强层（数据表那一侧）读到云端快照后交回来套用；写入口同理回抛给它。 */
+  window.__wlPxSnap = {
+    payload: snapPayload,
+    apply: function(o){ return applySnap(o, 'cloud'); },
+    stale: function(o){ return snapStale(o); },
+    current: function(){ return snapPayload(); }
+  };
+  function snapApply(){
+    var o = snapLoad();
+    if(o) applySnap(o, 'local');
   }
   function inSession(d){
     var day = d.getDay();
@@ -2162,6 +2365,10 @@ var WL_MODEL = @@PX_MODEL@@;</script>
     if(!on) return;
     timer = setInterval(function(){ if(inSession(new Date())) refresh(false); }, 60000);
   }
+
+  /* 先把上次刷新的价套回去，再挂按钮——顺序不能反：snapApply 要重算统计，
+     跑在绑定之后会让「点刷新」和「刚打开」两条路径算出的数打架。 */
+  snapApply();
 
   if(BTN) BTN.addEventListener('click', function(){ refresh(true); });
   if(AUTO){
