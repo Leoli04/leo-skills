@@ -282,15 +282,15 @@
       </p>
     </div>
     <div class="card">
-      <div class="chart-title">护城河评估</div>
-      <div class="moat-row"><div class="moat-label">物理市场垄断</div><div class="moat-bar-bg"><div class="moat-bar" style="width:95%"></div></div><div class="moat-score">{{N}}分</div></div>
-      <div class="moat-row"><div class="moat-label">商户网络效应</div><div class="moat-bar-bg"><div class="moat-bar" style="width:92%"></div></div><div class="moat-score">{{N}}分</div></div>
-      <div class="moat-row"><div class="moat-label">{{经营地}}城市品牌</div><div class="moat-bar-bg"><div class="moat-bar" style="width:90%"></div></div><div class="moat-score">{{N}}分</div></div>
-      <div class="moat-row"><div class="moat-label">租金提价能力</div><div class="moat-bar-bg"><div class="moat-bar" style="width:65%"></div></div><div class="moat-score">{{N}}分</div></div>
-      <div class="moat-row"><div class="moat-label">数贸生态（平台+支付）</div><div class="moat-bar-bg"><div class="moat-bar" style="width:62%"></div></div><div class="moat-score">{{N}}分</div></div>
-      <div class="moat-row"><div class="moat-label">国际贸易服务能力</div><div class="moat-bar-bg"><div class="moat-bar" style="width:55%"></div></div><div class="moat-score">{{N}}分</div></div>
+      <div class="chart-title">护城河评估（各维度满分 100 分）</div>
+      <div class="moat-row"><div class="moat-label">物理市场垄断</div><div class="moat-bar-bg"><div class="moat-bar" style="width:95%"></div></div><div class="moat-score">95</div></div>
+      <div class="moat-row"><div class="moat-label">商户网络效应</div><div class="moat-bar-bg"><div class="moat-bar" style="width:92%"></div></div><div class="moat-score">92</div></div>
+      <div class="moat-row"><div class="moat-label">{{经营地}}城市品牌</div><div class="moat-bar-bg"><div class="moat-bar" style="width:90%"></div></div><div class="moat-score">90</div></div>
+      <div class="moat-row"><div class="moat-label">租金提价能力</div><div class="moat-bar-bg"><div class="moat-bar" style="width:65%"></div></div><div class="moat-score">65</div></div>
+      <div class="moat-row"><div class="moat-label">数贸生态（平台+支付）</div><div class="moat-bar-bg"><div class="moat-bar" style="width:62%"></div></div><div class="moat-score">62</div></div>
+      <div class="moat-row"><div class="moat-label">国际贸易服务能力</div><div class="moat-bar-bg"><div class="moat-bar" style="width:55%"></div></div><div class="moat-score">55</div></div>
       <div style="font-size:11px;color:#888;margin-top:10px;line-height:1.6;">
-        评分为本报告基于商业模式特征与公开信息的<strong>定性判断，非客观数据</strong>，仅用于横向比较各护城河来源的相对强弱。租金提价能力一项，因管理层 {{数量}}–{{X%}} 涨租指引尚未兑现、且受商户经营景气制约，评分不宜给高。
+        <strong>统一口径：各维度满分 100 分</strong>，条形宽度即分值（%）。评分为本报告基于商业模式特征与公开信息的<strong>定性判断，非客观数据</strong>，仅用于横向比较各护城河来源的相对强弱。六项均值（本例 76.5）除以 10 后填入下方「综合评分矩阵」的「商业模式与护城河」行 —— <strong>矩阵该行由本卡折算，不另行独立打分</strong>。租金提价能力一项，因管理层 {{数量}}–{{X%}} 涨租指引尚未兑现、且受商户经营景气制约，评分不宜给高。
       </div>
     </div>
   </div>
@@ -2085,9 +2085,9 @@
     <div class="chart-title">综合评分矩阵</div>
     <div style="overflow-x:auto;">
       <table class="comp-table">
-        <thead><tr><th>维度</th><th>评分</th><th>依据</th></tr></thead>
+        <thead><tr><th>维度</th><th>评分（0—10）</th><th>依据</th></tr></thead>
         <tbody>
-          <tr><td>商业模式与护城河</td><td style="color:#2e7d32;font-weight:600;">{{N}} / {{N}}</td><td>全球唯一规模化小商品集散地，主力五区出租率 {{X%}}–{{X%}}，收租毛利 {{X%}}（{{X%}} 年）</td></tr>
+          <tr><td>商业模式与护城河</td><td style="color:#2e7d32;font-weight:600;">{{N}} / 10</td><td>（得分＝护城河评估卡均值 {{N}}/100 折算）全球唯一规模化小商品集散地，主力五区出租率 {{X%}}–{{X%}}，收租毛利 {{X%}}（{{X%}} 年）</td></tr>
           <tr><td>成长性</td><td style="color:#2e7d32;font-weight:600;">{{N}} / {{N}}</td><td>营收 +{{X%}}，但主要靠房产结转与低毛利贸易，经常性利润增速仅个位数</td></tr>
           <tr><td>盈利质量</td><td style="color:#e65100;font-weight:600;">{{N}} / {{N}}</td><td>扣非/归母 {{X%}} 成色尚可，但 OCF 转负、扣非增速停滞</td></tr>
           <tr><td>资产负债表</td><td style="color:#e65100;font-weight:600;">{{N}} / {{N}}</td><td>资产负债率 {{X%}}、有息负债率 {{X%}} 健康，但流动比率 {{X%}} 偏紧</td></tr>
@@ -2098,6 +2098,9 @@
           <tr style="background:#fef9fb;"><td><strong>综合</strong></td><td style="color:#c62828;font-weight:700;font-size:14px;">{{N}} / {{N}}</td><td><strong>好公司，但当前价格与时机都不合适 —— 等待 {{N}}–{{金额}}区间与基本面验证信号</strong></td></tr>
         </tbody>
       </table>
+    </div>
+    <div style="font-size:11.5px;color:#888;margin-top:10px;line-height:1.8;">
+      <strong>口径：</strong>八个维度按 0—10 分独立打分后取算术平均，<strong>不设权重、不做加权合成</strong>。其中「商业模式与护城河」一行<strong>不独立打分</strong> —— 取上节护城河评估卡的六项均值（100 分制）除以 10 后填入，保证同一份报告里两处口径不打架。改动卡上任一分值，此行与综合分须同时重算。
     </div>
   </div>
 </div>

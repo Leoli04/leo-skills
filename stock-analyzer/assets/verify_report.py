@@ -666,6 +666,136 @@ def check_scenario_dividend(html):
             f"股息率 {div_yield}% 低于 3% 门槛，可省股息，但表下应明写「仅计价格回报，未含股息」")
 
 
+def check_moat_consistency(html):
+    """护城河评分卡统一 100 分制，且综合评分矩阵的护城河行＝卡均值折算。
+
+    真实事故（2026-11 全库体检 136 份）：护城河卡 100 分制 27 份 / 10 分制 3 份 /
+    5 分制 3 份 / 无卡 103 份，矩阵 10 分制 36 份 / 5 分制 1 份 / 100 分制 1 份；
+    其中 7 份在**同一份报告里**卡均值与矩阵行差 0.1—2.0 分（矩阵行全部高于卡均值）。
+    根因不是有人算错，而是：卡是选做组件、矩阵是必做组件，两者分母各自自由填写，
+    而 SIG 具名组件表里根本没有「护城河评分卡」这一项 —— 门禁从头到尾查不到它。
+    """
+    CELL = re.compile(r'<div class="moat-score"[^>]*>([^<]*)</div>')
+    BAR = re.compile(r'<div class="moat-bar" style="width:([\d.]+)%')
+
+    def _n(t):
+        t = strip_tags(t).replace("&nbsp;", " ").strip().rstrip("分").strip()
+        m = re.fullmatch(r"(\d+(?:\.\d+)?)(?:\s*/\s*\d+)?", t)
+        return float(m.group(1)) if m else None
+
+    # 卡区间：含护城河关键词的标题起，到下一个同级标题止
+    heads = [(m.start(), strip_tags(m.group(0)).strip())
+             for m in re.finditer(r'<h[34][^>]*>.*?</h[34]>|'
+                                  r'<div class="chart-title"[^>]*>.*?</div>', html, re.S)]
+    lo, hi, ctitle = 0, len(html), None
+    for i, (pos, txt) in enumerate(heads):
+        if re.search(r"护城河|竞争壁垒|竞争力", txt or ""):
+            lo = pos
+            hi = heads[i + 1][0] if i + 1 < len(heads) else len(html)
+            ctitle = txt
+            break
+    seg = html[lo:hi]
+    cells = list(CELL.finditer(seg))
+    bars = list(BAR.finditer(seg))
+    if not cells:  # 标题格式异于预期时回退全文
+        cells = list(CELL.finditer(html))
+        bars = list(BAR.finditer(html))
+        seg = html
+        ctitle = None
+
+    vals = []
+    for m in cells:
+        v = _n(m.group(1))
+        if v is not None:
+            vals.append(v)
+    if not cells or not vals:
+        add("PASS", "护城河评分卡", "本报告未做护城河评分卡（选做项），跳过同源检查")
+        return
+
+    # 1) 100 分制
+    mx = max(vals)
+    if mx <= 10.5:
+        add("FAIL", "护城河卡分制", f"最大分值 {mx:g} —— 卡必须是 100 分制，"
+            f"10 分制请 ×10，5 分制请 ×20，并同步改 moat-bar 的 width")
+    elif mx < 90 and mx > 10.5 and len(vals) <= 3:
+        add("WARN", "护城河卡分制", f"仅 {len(vals)} 项且最高 {mx:g} 分，确认不是漏乘倍率")
+    else:
+        add("PASS", "护城河卡分制", f"100 分制，{len(vals)} 项，最高 {mx:g}")
+
+    # 2) 条宽 = 分值
+    bad_bar = []
+    for m, b in zip(cells, bars):
+        v = _n(m.group(1))
+        w = float(b.group(1))
+        if v is not None and abs(w - v) > 1.5:
+            bad_bar.append(f"{v:g}分/宽{w:g}%")
+    if bad_bar:
+        add("FAIL", "护城河条宽＝分值", "; ".join(bad_bar[:4]))
+    elif bars:
+        add("PASS", "护城河条宽＝分值", f"{len(bars)} 条一致")
+
+    # 3) 卡标题写明满分 100
+    if ctitle is not None and "100" not in ctitle:
+        add("FAIL", "护城河卡标题", f"未写明满分：{ctitle[:36]} —— 须为「…；满分 100 分」")
+    elif ctitle is not None:
+        add("PASS", "护城河卡标题", "已标注满分 100 分")
+
+    # 4) 矩阵护城河行 = 卡均值折算
+    mv = sum(vals) / len(vals)
+    mtx = re.search(r"综合评分矩阵[\s\S]{0,200}?<table[^>]*>(.*?)</table>", html, re.S)
+    if not mtx:
+        add("WARN", "矩阵护城河行", "未定位到综合评分矩阵表格，无法核对同源")
+        return
+    rows = []
+    for r in re.findall(r"<tr[^>]*>(.*?)</tr>", mtx.group(1), re.S):
+        cs = [strip_tags(c).strip() for c in
+              re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", r, re.S)]
+        if cs:
+            rows.append(cs)
+    if len(rows) < 2:
+        add("WARN", "矩阵护城河行", "矩阵行数不足，无法核对")
+        return
+    hdr = rows[0]
+    vi = None
+    for i, h in enumerate(hdr):
+        if h in ("评分", "得分", "分数") or h.startswith(("评分（", "得分（", "评分(", "得分(")):
+            vi = i
+            break
+    if vi is None:
+        add("WARN", "矩阵护城河行", f"未识别评分列，表头为 {hdr[:4]}")
+        return
+    data = [r for r in rows[1:] if len(r) > vi
+            and not any(k in r[0] for k in ("合计", "综合", "总分"))]
+    denom = None
+    for r in data:
+        m = re.fullmatch(r"([\d.]+)\s*/\s*(\d+)", r[vi].strip())
+        if m:
+            denom = float(m.group(2))
+            break
+    if denom is None:
+        ns = [_n(r[vi]) for r in data]
+        ns = [x for x in ns if x is not None]
+        denom = 100.0 if (ns and min(ns) > 10.5) else 10.0
+    want = mv / 100.0 * denom
+    hit = False
+    for r in data:
+        if re.search(r"护城河", r[0]):
+            hit = True
+            got = _n(r[vi])
+            if got is None:
+                add("WARN", "矩阵护城河行", f"分值无法解析：{r[vi]}（模板占位符可忽略）")
+            elif abs(got - want) > 0.35:
+                add("FAIL", "矩阵护城河行",
+                    f"{r[0]} = {r[vi]}，卡均值 {mv:.1f}/100 折算应为 {want:.1f}/{denom:g} —— "
+                    f"两处讲同一件事却给了不同的数")
+            else:
+                add("PASS", "矩阵护城河行", f"{r[vi]} = 卡均值 {mv:.1f} 折算")
+            break
+    if not hit:
+        add("WARN", "矩阵护城河行",
+            f"矩阵无「护城河」行（卡均值 {mv:.1f}/100）；若用了「竞争地位」等别称须人工确认维度是否相同")
+
+
 def check_conclusion_consistency(html):
     """结论数字跨位置同值：页头 hero 结论条 vs 正文众数。
 
@@ -1092,6 +1222,7 @@ def main():
     check_css_classes(html)
     check_cross_stock_contamination(html, args.report)
     check_scenario_dividend(html)
+    check_moat_consistency(html)
     check_conclusion_consistency(html)
     check_section_depth(html, _resolve_skill_dir(args.skill_dir), args.report)
     check_named_components(html, _resolve_skill_dir(args.skill_dir), args.report)
