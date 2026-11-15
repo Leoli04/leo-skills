@@ -181,6 +181,7 @@ python <skill>/assets/lib_reports.py audit --manifest <工作目录>/watchlist_m
   - **主：资料库数据表「观察池现价快照」`X2d22QAZzAa8q6upyuuDAs`**（单行，字段 `快照日期` / `行情时间` / `更新时间` / `只数` / `价格数据`，最后一个是 114 只 `{code:{px,str,chg,ts}}` 的 JSON，约 7.9KB，实测 text 字段存得下且不截断）。跨设备、跨浏览器可见。
   - **兜底：`localStorage` 键 `wl-pxsnap`**，断网或没连上表时重开也不退回旧价。
   - 打开页面时 `snapApply()` 先套本地，`enh.js initSnap()` 再读云端，日期更新才覆盖（`date > M.asof日期`）；静态快照追平就自动作废，避免重新渲染上传后被旧数据盖住。状态条会写明来源：「云端快照」/「本机缓存」，旁边给「清除快照，回到静态数据」。
-  - 页面必须有一处 `#pxSnapSrc[data-sp-database-id]` 静态声明，平台才放行 `db.query/updateRecord` 对这张表的读写；`import_html` 上传时 `--databases` 一并带上两张表。**漏替换 `@@ENH_SNAP_DB@@` 会静默失效**，`check_ledger_skeleton.py` 的 `no_placeholder` 项会拦。
+  - 页面必须有一处 `#pxSnapSrc[data-sp-database-id]` 静态声明，平台才放行 `db.query/updateRecord` 对这张表的读写；`import_html` 上传时 `--databases` 一并带上两张表（命令见 SKILL.md「交付」）。**漏替换 `@@ENH_SNAP_DB@@` 会静默失效**，`check_ledger_skeleton.py` 的 `no_placeholder` 项会拦；**整块丢失**（旧版渲染器 / `--no-enhance`）由同脚本的 `snap_src` 项拦（2026-11-15 加，判「标签 + `data-sp-bindable` + 合法库 id 三者在同一标签上」，平台重排属性、塞 `data-page-node-id` 都算过）。
+  - **重建/上传不破坏这一层的三个前提**：① `enhance/enh.js` 与 `render_watchlist.py` 是同批更新的（渲染器从 `enhance/` 读文件，不内联）；② 上传带 `--databases` 两张表；③ 快照表**只有一行**——`enh.js` 读 `rows[0]`，若历史上残留多行，可能取到旧行（表现为「刷新后重开还是旧价」），发现多行就只留 `更新时间` 最新的一行。前两条有门禁，第三条只能靠打开页面看状态条或查表。
   - 表里**不要留测试数据**：建表验证时灌的假价日期同样会被当成有效快照套到页面上，验证完必须删干净。
 - 验收脚本（`.tmp/px/`）：`probe2.mjs`（点刷新 → 比对 KPI/chips/分布/矩阵与 `WL_MODEL` 独立计算是否一致 + 连点两次验幂等）、`probe3.mjs`（持仓市值浮盈、A 区结语、排序是否仍成立）。**用旧 ledger（如 10-21）渲染再点刷新**，才能看到数字真的变；用当日收盘 ledger 测则数值不变，验不出重算逻辑。

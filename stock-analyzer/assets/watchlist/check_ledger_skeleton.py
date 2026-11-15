@@ -8,6 +8,9 @@
   2. 数据表绑定          `#posSrc` + `data-sp-bindable` + `data-sp-database-id`
   3. ＋加行增强层        CSS `.padd-mini` + JS（posMask / addRecord / fetchAll）
   4. 持仓与计划 Tab      `#view-pos` + `data-v="pos"`
+  5. 现价快照表绑定      `#pxSnapSrc` + `data-sp-bindable` + `data-sp-database-id`
+                         （2026-11-15 加：刷新价写回云端表，跨设备才看得到；
+                          丢了页面完全正常，只是重开又回旧价 —— 又一个静默故障）
 
 于是每次「本地重建 → 覆盖上传」都会静默丢一批：2026-11-05 那次丢的正是 2/3/4，
 页面看着完全正常，只有点「＋」没反应、点位表不联动 —— 用户先发现，比脚本晚一步。
@@ -157,6 +160,11 @@ CHECKS = [
     dict(k="dbid", group="smart", where="body", kind="regex",
          arg=r'data-sp-database-id="([0-9A-Za-z]{20,40})"', label="数据库 ID",
          hint="绑定到了空库；应指向台账数据表（本项目 LmhN0eFhk6hgXCjbOcSlaz）"),
+    dict(k="snap_src", group="smart", where="body", kind="tag_binding",
+         arg='id="pxSnapSrc"', label="现价快照表绑定 #pxSnapSrc",
+         hint="刷新后的价存不回去：重开页面、换电脑一律退回静态快照。"
+              "渲染器 inject_enhancement 会注入这一行，缺了说明用了旧版渲染器或 --no-enhance；"
+              "在页内但有标签无属性，说明手工拼过或平台绑定被吃掉，重建一次即可"),
     dict(k="padd_css", group="smart", where="style", kind="token",
          arg="padd-mini", label="＋按钮样式 .padd-mini（CSS）",
          hint="CSS 丢了：按钮会生成但没样式，撑破卡片布局"),
@@ -246,6 +254,21 @@ def evaluate(html: str) -> list[dict]:
             ok = (n == 0)
             found = ("无" if ok else "残留：" + ",".join(sorted(set(hits)))[:80])
             results.append(dict(c, ok=ok, n=n, found=found))
+            continue
+        if c["kind"] == "tag_binding":
+            # 「可绑定 + 库 id」必须挂在同一个标签上才算数。平台上传后会重排属性、
+            # 再塞 data-page-node-id，故按整标签匹配、不看属性顺序。
+            m = re.search(r'<[a-zA-Z][^>]*' + re.escape(c["arg"]) + r'[^>]*>', body)
+            if not m:
+                ok, found = False, "标签不存在"
+            else:
+                tag = m.group(0)
+                has_bind = 'data-sp-bindable="database"' in tag
+                dm = re.search(r'data-sp-database-id="([^"]*)"', tag)
+                got = dm.group(1) if dm else ""
+                ok = has_bind and len(got) >= 10 and "@@" not in got
+                found = "bind=%s · id=%s" % ("Y" if has_bind else "N", got or "缺失")
+            results.append(dict(c, ok=ok, n=1 if ok else 0, found=found))
             continue
         if c["kind"] == "heading":
             ok = has_heading(hs, c["level"], c["arg"])
