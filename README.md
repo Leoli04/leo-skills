@@ -290,7 +290,7 @@ leo-skills/
 │   ├── assets/            # HTML 外壳模板 + 内联字体
 │   ├── references/        # 十步提示词 / 模板填充规范
 │   └── scripts/           # 渲染器 / 字体抓取
-├── podcast-learning-notes__skillhub/  # 播客 → 学习笔记（转写 + 七阶段收口）
+├── podcast-learning-notes/ # 播客 → 学习笔记（转写 + 七阶段收口）
 │   ├── SKILL.md
 │   ├── references/        # 笔记模板 / 三轮审校 / 专名纠错 / 转写方案
 │   └── scripts/           # 小宇宙抓取 / 本地与云转写
