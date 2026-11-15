@@ -736,7 +736,7 @@ python <skill>/assets/verify_report.py "<报告.html>" --skill-dir <skill>
          （本标的的资料库一侧以 Phase 0a 的 scan 输出为起点，不必重新摸索；
            归并口径与节点匹配规则见 references/ledger_ops.md「归并口径」）
 ② 建档   更新 assets/watchlist/watchlist_manifest.json 的 file / report_date / lib_url
-③ 构建前 · 防丢行（2026-11-15 立，跳过它等于允许静默删行）
+②b 构建前 · 防丢行（2026-11-15 立，跳过它等于允许静默删行）
    build_watchlist.py 对 manifest 里「文件不存在」的条目是 `continue` 跳过（只打一行
    「缺文件」警告，不阻断）。所以 manifest 一旦落后于库端（报告从工作区移走 / 被别的
    会话清掉本地文件），整页重建会**把那几行直接从台账删掉**，而且页面完全自洽 ——

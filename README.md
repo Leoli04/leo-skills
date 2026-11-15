@@ -61,10 +61,12 @@ python screen.py --type value,dividend   # 只跑指定类型
   - `assets/lib_reports.py` — **资料库历史报告检索 / 全量盘查 / 旧版归档**（`scan` 按标的检索历史版本，给出 `NO_HISTORY` / `HISTORY_FOUND` / `MULTI_VERSION`；`audit` 全量盘查，一次列出所有「多版本并存」组与重复标题，给出 `CLEAN` / `NEEDS_ACTION`；`archive` 幂等移入「旧版归档」）
   - `assets/peer_attribution.py` — **同业归因核查**（第 5 步行业横向前必跑）：`python assets/peer_attribution.py 300558 688578`，一次输出单季拆解（营收/归母/扣非，转亏自动标注）/ 三口径利润与非经常性损益 / 主营构成（判「有没有这个靶点的产品」是否等于「是不是赛道代理」）/ 经营评述中「减值·剔除」原文 / 自动判读提示。**防的是「对手失血」被误读成「赛道失速」**——这类错误数字全真、结论方向反，对持仓含义相反（详见 redlines 第 61–66 条）
   - `assets/watchlist/build_watchlist.py` / `render_watchlist.py` — **观察池台账**（Phase 11）：按 manifest 从各报告抽结论字段建 `ledger_final.json`，再渲成自包含 HTML「决策驾驶舱」（可操作性分区 / 与上期比对的变化高亮 / 复核时间轴 / 三档配色）。`overrides.alert` 可给单只标的挂一条**报告出具后的行情更新**琥珀条（典型：跌破报告自己写死的退出价位）：默认**只提示不改数**；经确认后也可把 `px` 一并覆盖为当日收盘、**维护为最新价**（潜在空间与距买点随新价重算，期望价/胜率/判定/报告日期仍保持报告原值）
-  - `assets/watchlist/check_ledger_gap.py` — **台账的 audit**（台账漏更新的机器兜底）：把「本地根目录报告代码集」与「实测库端台账 `data-k` 代码集」做差集，输出 `MISSING`（有报告无行）/ `STALE`（台账胜率 ≠ 报告胜率，该行数值停在旧版）/ `EXTRA`，末行给 `LEDGER_GAP_RESULT: CLEAN|NEEDS_ACTION`；`--pull` 先拉最新库端台账。**每轮报告交付收尾必跑，`NEEDS_ACTION` 时不许报完成**。`STALE` 只认胜率——胜率随模型修订变、不随股价变，潜在空间会被「全池换价」按当日收盘重算，拿它判会全表误报
+  - `assets/watchlist/check_ledger_gap.py` — **台账的 audit**（台账漏更新的机器兜底）：把「本地根目录报告代码集」与「实测库端台账 `data-k` 代码集」做差集，输出 `MISSING`（有报告无行）/ `STALE`（台账胜率 ≠ 报告胜率，该行数值停在旧版）/ `EXTRA`（台账有行、本地无报告 = 重建会静默丢的行），末行给 `LEDGER_GAP_RESULT: CLEAN|NEEDS_ACTION`；`--pull` 先拉最新库端台账（走 `page/download_page_artifacts.py`，**拉不到即 `PULL_FAILED` 退出码 3，不会退化成本地旧快照** —— 拿一个月前的台账当基准会给出具体的错误指令）。**每轮报告交付收尾必跑，`NEEDS_ACTION` 时不许报完成**；重建台账之前也必跑一次，`EXTRA` 非空先回拉报告补 manifest 再构建。`STALE` 只认胜率——胜率随模型修订变、不随股价变，潜在空间会被「全池换价」按当日收盘重算，拿它判会全表误报
   - `assets/watchlist/check_ledger_skeleton.py` — **台账的骨架体检**（与上一条互补：gap 查「行有没有 / 数对不对」，本脚本查「行之外的一切有没有」）：三组判据 —— core 骨架（`h1` / 四个 `h2` 模块 / `zone zone--` / `WL_MODEL` / `#pxbar` / `qt.gtimg.cn` / `wl-theme`）、smart 组（`inject.js` / `#posSrc` + `data-sp-bindable` + `data-sp-database-id` / `#pxSnapSrc` 现价快照表绑定（2026-11-15 加，丢了刷新价只在当次会话有效） / `.padd-mini` 的 CSS 与 JS **分开判** / `posMask` / `addRecord` / `fetchAll` / `#view-pos` + `data-v="pos"`）、optional（后加 Tab），末行给 `LEDGER_SKELETON_RESULT: OK|BROKEN`。**为什么需要它**：`render_watchlist.py` 原本只产出「观察池」这一层，智能页面 / 数据表绑定 / ＋加行增强层 / 持仓 Tab 全靠事后补，每次整页重建覆盖上传都会静默吃掉一批（页面看着完全正常，只有点「＋」没反应），而 gap 检查对此完全无感。**2026-11-07 起增强层已固化成 `assets/watchlist/enhance/`（`enh.css` / `enh.js` / `pos_src.html`），渲染器自动拼入**，本脚本转为回归防线。`--stage render` 时 `inject.js` 标 SKIP（平台上传才注入），其余 smart 项一律 PASS 才算过；`--diff <上一版.html>` 直接列出丢了哪几条。**每次改台账后、上传前必跑**
   - `assets/watchlist/enhance/` — 交互增强层三个真源文件。**要改「＋」加行 / 持仓表单 / 数据表绑定行为就改这里**，别再写一次性补丁脚本；`@@ENH_DB_ID@@` 由渲染器 `--database-id` 替换
-  - `assets/watchlist/patch_schl_tab.py` — **给台账加「沃尔特施洛斯策略观察」视图**：`--csv` 传施洛斯筛选结果（取 `层级=A`）、`--funnel` 传漏斗各层、`--metrics-date` 传口径日期，已含该视图自动跳过。Tab 数据来自外部筛选结果，故不塞进渲染器。新视图一律 `schl-` 前缀类名，脚本末尾断言不得混入 `data-row` / `zone` / `zcard` / `wl`（混入会把 A 级那几只算进观察池的 KPI 与分区计数）
+  - `assets/watchlist/safe_upload.py` — **台账覆盖上传的唯一入口**：备份线上当前版 → 比对受保护模块（线上有、新件无则 BLOCK，退出码 4）→ 上传 → 回拉复核；`--dry-run` 只比对不上传。**为什么必须有它**：`import_html.py --node-block-id` 的语义就是整页 blob 替换，无 patch、无备份、无 diff，施洛斯视图就是这么丢过一次
+  - `assets/watchlist/schl_result.json` — **施洛斯视图的唯一数据源**（A 级名单 / 漏斗各层 / 口径日 / 每只一句话风险），2026-11-09 起纳入版本管理，渲染器收尾自动注入、缺文件即硬失败。换筛选批次只改这个 JSON
+  - `assets/watchlist/patch_schl_tab.py` — 施洛斯视图的手工入口（**常规流程用不到**，渲染器已自带）：`--json` 缺省读 `schl_result.json`；`--csv` 支持一次性批次（取 `层级=A`）；已含该视图自动跳过。新视图一律 `schl-` 前缀类名，脚本末尾断言不得混入 `data-row` / `zone` / `zcard` / `wl`（混入会把 A 级那几只算进观察池的 KPI 与分区计数）
   - `references/methodology.md` — 方法论全文结构速查
   - `references/redlines.md` — 66 条红线 / 49 个陷阱 / 79 项自检
   - `references/data_pipeline.md` — 实测可用的数据管线接口
@@ -86,16 +88,24 @@ python assets/peer_attribution.py 300558 688578
 python assets/verify_report.py "<报告.html>" --skill-dir <stock-analyzer 目录>
 
 # 台账漏项自检（每份报告交付收尾必跑，NEEDS_ACTION 不许报完成）
+# 拉不到库端台账会直接 PULL_FAILED（退出码 3），不会拿本地旧快照顶替
 python assets/watchlist/check_ledger_gap.py --root <工作目录> --pull
 
 # 台账骨架体检（任何改台账动作之后、上传前必跑，BROKEN 不许上传）
 python assets/watchlist/check_ledger_skeleton.py --html "<台账.html>" --stage upload
 python assets/watchlist/check_ledger_skeleton.py --html "<新版.html>" --diff "<上一版.html>"
 
-# 给台账加「沃尔特施洛斯策略观察」视图（可选；已含则自动跳过）
-python assets/watchlist/patch_schl_tab.py --html "<台账.html>" --csv _schl_result.csv \
-    --funnel "5927:全 A,167:估值初筛,69:财务六关,38:九关全过" --metrics-date 2026-11-07
+# 台账覆盖上传（唯一入口：备份 → 模块比对 → 上传 → 回拉复核）
+python assets/watchlist/safe_upload.py --html "<台账.html>" \
+    --node-block-id <台账节点ID> --space-id lWmChDNEl28HPp3VjuY5W7
+
+# 施洛斯视图手工入口（常规流程用不到，渲染器已随 schl_result.json 自带）
+python assets/watchlist/patch_schl_tab.py --html "<台账.html>" --json assets/watchlist/schl_result.json
 ```
+
+> **收尾三件套，缺一件都不算交付**：① 报告上传「个股报告」→ ② manifest 建档 + 建台账 + 上传 → ③ `check_ledger_gap.py --pull` 必须 `CLEAN`。`NO_HISTORY`（首次覆盖）只免「归档旧版」，**不免台账那一行**。
+>
+> **仓库镜像 ≠ 安装目录**：本仓库的改动不会自动生效，skill 实际加载的是 `~/.workbuddy/skills/`。同步完仓库要逐文件 `cp` 过去（排除 `__pycache__` / `_user_meta.json` / `_mt_check_items.json` / `_tpl_*`），否则文档写的是新行为、跑的是旧脚本。
 
 > `lib_reports.py` 依赖 CodeBuddy 内置 `library` skill 的 `space_api.py`（资料库接口），目录可用 `--lib-dir` 或环境变量 `WORKBUDDY_LIBRARY_DIR` 指定；不接资料库时可跳过 Phase 0a。
 

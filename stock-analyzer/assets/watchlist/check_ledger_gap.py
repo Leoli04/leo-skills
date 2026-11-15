@@ -27,7 +27,8 @@ SKILL.md 第 48 / 676 行早已写明「每产出一份新报告，必须同步�
     python assets/watchlist/check_ledger_gap.py --root . --pull
     python assets/watchlist/check_ledger_gap.py --root . --ledger <拉回的台账.html>
 
-退出码：0 = CLEAN，1 = NEEDS_ACTION，2 = 找不到台账快照
+退出码：0 = CLEAN，1 = NEEDS_ACTION，2 = 找不到台账快照，3 = --pull 拉取失败
+       （3 是刻意设计的硬失败：拉不到库端就**不许**拿本地旧快照顶替，见 pull_failed 分支注释）
 """
 from __future__ import annotations
 
@@ -117,16 +118,13 @@ def newest_snapshot(root: str) -> str | None:
 _LIB_TRIED = []
 
 
-def _find_library_dir():
-    """定位 WorkBuddy library skill 目录（需含 space_api.py）。
+def _library_candidates():
+    """library skill 目录的候选列表（不写死用户名与安装路径）。
 
-    不写死用户名与安装路径：先认环境变量，再按相对位置往上找兄弟目录，
-    最后用系统的 LOCALAPPDATA / APPDATA / 用户主目录拼出内置与用户级安装位。
-    全部失败返回空串，调用方负责给清晰报错（见 _lib_missing_msg）。
+    先认环境变量，再按相对位置往上找兄弟目录，然后用系统的 LOCALAPPDATA /
+    APPDATA / 用户主目录拼出内置与用户级安装位，最后补插件缓存里的版本化目录
+    （workbuddy-builtin/skill-library/<ver>）。
     """
-    def hit(p):
-        return bool(p) and os.path.isfile(os.path.join(p, "space_api.py"))
-
     here = os.path.dirname(os.path.abspath(__file__))
     cands = []
     for env in ("WORKBUDDY_LIBRARY_DIR", "CODEBUDDY_SKILL_DIR"):
@@ -143,15 +141,28 @@ def _find_library_dir():
                 base, "Programs", "WorkBuddy", "resources", "app.asar.unpacked",
                 "resources", "plugins", "workbuddy-builtin", "skills", "library"))
     cands.append(os.path.join(os.path.expanduser("~"), ".workbuddy", "skills", "library"))
-
-    del _LIB_TRIED[:]
-    seen = set()
+    for base in (os.path.join(os.path.expanduser("~"), ".workbuddy"),):
+        cands += sorted(glob.glob(os.path.join(
+            base, "plugins", "cache", "workbuddy-builtin", "skill-library", "*")), reverse=True)
+        cands.append(os.path.join(
+            base, "plugins", "marketplaces", "workbuddy-builtin", "skills", "library"))
+    seen, uniq = set(), []
     for d in cands:
-        if not d or d in seen:
-            continue
-        seen.add(d)
+        if d and d not in seen:
+            seen.add(d)
+            uniq.append(d)
+    return uniq
+
+
+def _find_library_dir():
+    """定位 WorkBuddy library skill 目录（需含 space_api.py）。
+
+    全部失败返回空串，调用方负责给清晰报错（见 _lib_missing_msg）。
+    """
+    del _LIB_TRIED[:]
+    for d in _library_candidates():
         _LIB_TRIED.append(d)
-        if hit(d):
+        if os.path.isfile(os.path.join(d, "space_api.py")):
             return d
     return ""
 
@@ -162,26 +173,42 @@ def _lib_missing_msg():
             + "\n用环境变量 WORKBUDDY_LIBRARY_DIR=<library 目录> 指定后重试。")
 
 
+def _find_artifacts_tool() -> str:
+    """定位 library skill 的 page/download_page_artifacts.py（回拉库端页面产物）。
+
+    为什么不走 space_api.py 的 manifest：`space.workspace.download-node` 已从
+    api-manifest.json 下线（2026-11-15 实测 `unknown api`），而
+    download_page_artifacts.py 直打 /space/api/agent/v1/list-page-artifacts，
+    不依赖 manifest，接口稳定。探测候选与 _find_library_dir 完全同一套，
+    只把判据从 space_api.py 换成 page/download_page_artifacts.py。
+    """
+    del _LIB_TRIED[:]
+    for d in _library_candidates():
+        _LIB_TRIED.append(d)
+        p = os.path.join(d, "page", "download_page_artifacts.py")
+        if os.path.isfile(p):
+            return p
+    return ""
+
+
 def pull(root: str, node_id: str, space_id: str) -> str | None:
-    """从库端拉最新台账 HTML。依赖 library skill 的 space_api.py。"""
-    api_candidates = [_find_library_dir()]
-    api = ""
-    for d in api_candidates:
-        if d and os.path.exists(os.path.join(d, "space_api.py")):
-            api = os.path.join(d, "space_api.py")
-            break
-    if not api:
-        print("PULL: 未找到 space_api.py，改用手头快照（可用 WORKBUDDY_LIBRARY_DIR 指定）")
+    """从库端拉最新台账 HTML。失败返回 None（调用侧必须硬失败，不得静默退化）。"""
+    tool = _find_artifacts_tool()
+    if not tool:
+        print("PULL: 未找到 page/download_page_artifacts.py。已探测：\n"
+              + "\n".join("  - " + p for p in _LIB_TRIED)
+              + "\n用环境变量 WORKBUDDY_LIBRARY_DIR=<library 目录> 指定后重试。")
         return None
-    out_dir = os.path.join(root, ".tmp", "_gap_ledger")
+    out_dir = os.path.join(root, ".tmp", "_gap_ledger", datetime.datetime.now().strftime("%Y%m%d_%H%M%S"))
     os.makedirs(out_dir, exist_ok=True)
-    r = subprocess.run([sys.executable, api, "space.workspace.download-node",
-                        "--space-id", space_id, "--node-id", node_id,
-                        "--out-dir", out_dir],
+    r = subprocess.run([sys.executable, tool, "--node-id", node_id, "--out-dir", out_dir],
                        capture_output=True, text=True, encoding="utf-8", errors="replace")
     txt = ((r.stdout or "") + (r.stderr or "")).strip()
-    print("PULL:", txt[-400:] if txt else "(无输出)")
+    if "KS_ARTIFACTS_OK" not in txt:
+        print("PULL: 失败 ——", txt[-400:] if txt else "(无输出)")
+        return None
     cands = sorted(glob.glob(os.path.join(out_dir, "*.html")), key=os.path.getmtime)
+    print("PULL: OK ——", os.path.relpath(cands[-1], root) if cands else "(无 html)")
     return cands[-1] if cands else None
 
 
@@ -196,7 +223,19 @@ def main() -> int:
     a = ap.parse_args()
 
     root = os.path.abspath(a.root)
-    led = a.ledger or (pull(root, a.node_id, a.space_id) if a.pull else None) or newest_snapshot(root)
+    if a.ledger:
+        led = a.ledger
+    elif a.pull:
+        led = pull(root, a.node_id, a.space_id)
+        if not led:
+            print("PULL_FAILED 拉不到库端台账 —— **拒绝退化成本地旧快照比对**。")
+            print("  旧快照可能落后数周（2026-11-15 实测：本地 10-21 快照报 11 只 MISSING + 1 只 STALE，"
+                  "而库端 11-12 版实际只有 3 只 MISSING），据此收工会把对的改成错的。")
+            print("  处理：① 用 page/download_page_artifacts.py 手动拉回后加 --ledger <文件>；"
+                  "② 或 WORKBUDDY_LIBRARY_DIR 指向 library skill 目录再跑 --pull。")
+            return 3
+    else:
+        led = newest_snapshot(root)
     if not led or not os.path.exists(led):
         print("ERR 找不到台账快照；加 --pull 从库端拉一次，或用 --ledger 指定")
         return 2
