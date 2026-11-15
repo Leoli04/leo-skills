@@ -62,9 +62,19 @@
     return (it && it.px !== null && it.px !== undefined) ? it.px : null;
   }
   function isLocked(r) { return String(r['成本备注'] || '').indexOf('锁定') >= 0; }
+  /* 同一代码允许存在多条记录：已清仓的历史行 + 重新入场的计划/持仓行。
+     所以这里必须「活跃优先」，不能直接返回第一条 —— 否则清仓后再建计划时，
+     byCode 抓到的是那条已清仓记录，addPlan 会误判「已在持仓计划里」，
+     而 sorted() 又不渲染已清仓行，用户既看不到卡片也建不了新计划
+     （2026-11-15 反馈：清仓过的标的加不进建仓计划）。 */
   function byCode(code) {
-    for (var i = 0; i < POS.length; i++) { if (POS[i]['代码'] === code) { return POS[i]; } }
-    return null;
+    var fallback = null;
+    for (var i = 0; i < POS.length; i++) {
+      if (POS[i]['代码'] !== code) { continue; }
+      if (String(POS[i]['状态'] || '') !== '已清仓') { return POS[i]; }
+      if (!fallback) { fallback = POS[i]; }
+    }
+    return fallback;
   }
   function recordId(r) { return r.record_id || r.recordId || r.id || r._id || ''; }
   function byRid(rid) {
@@ -160,12 +170,16 @@
   function addPlan(item, btn) {
     if (!db) { flashNote('当前打开方式未连上数据表，请到资料库中打开台账后再试'); return; }
     var exist = byCode(item.code);
-    if (exist) {
+    var closed = exist && String(exist['状态'] || '') === '已清仓';
+    if (exist && !closed) {
       switchView('pos');
       setTimeout(function () { focusCard(item.code); openForm(exist); }, 80);
       flashNote('「' + item.name + '」已在持仓计划里，直接编辑即可');
       return;
     }
+    /* 没有记录，或者只有一条已清仓的历史记录 —— 都走新建。
+       已清仓那条保留留档（持仓备注里记着清仓价与兑现），新记录从「计划中」起算，
+       成本与浮亏都不继承上一次，避免把历史仓位的盈亏混进来。 */
     switchView('pos');
     openForm(null, {
       '标的名称': item.name,
@@ -177,6 +191,9 @@
       '加入日期': today(),
       '报告链接': item.link ? [{ link: item.link, text: '报告原文' }] : ''
     });
+    if (closed) {
+      flashNote('「' + item.name + '」此前已清仓（旧记录留档），这里新建一条计划记录');
+    }
   }
 
   function switchView(v) {
