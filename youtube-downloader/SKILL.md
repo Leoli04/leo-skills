@@ -54,8 +54,9 @@ Agent (youtube-download-agent)
   ```
 - **Node.js**：JS Runtime（用于执行 Challenge Solver 脚本），指定路径如：
   ```
-  C:\Users\86130\.workbuddy\binaries\node\versions\22.22.2\node.exe
+  ~/.workbuddy/binaries/node/versions/<版本>/node.exe
   ```
+  `<版本>` 取 `~/.workbuddy/binaries/node/versions/current` 的内容（本机当前 `22.22.2-6`）。
 - **ffmpeg**（可选）：用于字幕嵌入、音频转 mp3、硬字幕烧录。无 ffmpeg 时可以下载原始格式
 
 ---
@@ -124,13 +125,13 @@ Agent (youtube-download-agent)
 
 Python 路径：
 ```
-C:\Users\86130\.workbuddy\binaries\python\versions\3.13.12\python.exe
+~/.workbuddy/binaries/python/versions/3.13.12/python.exe
 ```
 
 **完整模板（系列下载）**：
 ```bash
 # 输出到系列独立文件夹
-C:\Users\86130\.workbuddy\binaries\python\versions\3.13.12\python.exe \
+~/.workbuddy/binaries/python/versions/3.13.12/python.exe \
   "{SKILL_ROOT}/scripts/download.py" \
   "https://www.youtube.com/watch?v=XXXXXX" \
   --subs "zh-Hans,en" \
@@ -139,7 +140,7 @@ C:\Users\86130\.workbuddy\binaries\python\versions\3.13.12\python.exe \
   --output-template "002_Playground_original.%(ext)s" \
   --proxy "http://127.0.0.1:PORT" \
   --cookies "youtube_cookies.txt" \
-  --js-runtime "C:/Users/86130/.workbuddy/binaries/node/versions/22.22.2/node.exe"
+  --js-runtime "$HOME/.workbuddy/binaries/node/versions/22.22.2-6/node.exe"
 ```
 
 ### 场景 B：系列智能下载（配合 Agent）

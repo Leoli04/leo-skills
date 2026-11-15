@@ -22,8 +22,6 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-LIB_DIR = ("C:/Users/MrLi/AppData/Local/Programs/WorkBuddy/resources/"
-           "app.asar.unpacked/resources/plugins/workbuddy-builtin/skills/library")
 SPACE_ID = "lWmChDNEl28HPp3VjuY5W7"
 FOLDER_ID = "ujlYAui5OmAlkvfEjReBOW"
 
@@ -57,7 +55,11 @@ def main():
     cfg_path = arg("--config", os.path.join(HERE, "dca_plan.json"))
     no_upload = "--no-upload" in sys.argv
     rebuild = "--rebuild" in sys.argv
-    lib_dir = arg("--lib-dir", "") or find_lib_dir() or LIB_DIR
+    lib_dir = arg("--lib-dir", "") or find_lib_dir()
+    if not lib_dir:
+        raise SystemExit("找不到 library skill 目录（需含 page/import_html.py）。\n"
+                         "  用 --lib-dir <目录> 指定，或确认 WorkBuddy 安装位置在"
+                         " %LOCALAPPDATA%/APPDATA 下。")
 
     # 0) 读配置：台账与产物路径都跟配置走，不落到 skill 安装目录
     with io.open(cfg_path, encoding="utf-8") as f:

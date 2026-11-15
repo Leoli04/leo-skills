@@ -811,6 +811,93 @@ def inject_enhancement(html, parts, db_id, snap_db_id=DEFAULT_SNAP_DB_ID):
     return html, True
 
 
+def plans_html(plans, rows_by_code, pulled_at=''):
+    """计划持仓区：资料库《持仓与计划》表里「状态=计划中」且台账无实际持仓的标的。
+
+    真源 = 资料库表（sync_plan_table.py pull 落到 plan_table.json），本函数只读缓存。
+    与实际持仓（manifest positions）职责分离：已持仓的标的一律不进此区，避免同一标的
+    在两处出现两套口径；表与 manifest 的冲突由 sync_plan_table.py 打印告警，不在此静默吞掉。
+    """
+    if not plans:
+        return ('<div class="plan-sec"><div class="plan-hd"><h3>计划持仓</h3>'
+                '<span class="plan-meta">资料库《持仓与计划》表内暂无「状态=计划中」的标的</span></div></div>')
+    rows_by_code = rows_by_code or {}
+    has_strat = any((p.get('strategy') or '待定') not in ('', '待定') for p in plans)
+
+    def _space(p):
+        r = rows_by_code.get(p['code']) or {}
+        px_s = r.get('px_n') or r.get('px') or ''
+        try:
+            px = float(px_s) if px_s else 0.0
+        except (TypeError, ValueError):
+            px = 0.0
+        exp = p.get('exp')
+        if not px or not exp:
+            return None, px_s or '—'
+        return (exp / px - 1) * 100, '%.2f' % px
+
+    plans = sorted(plans, key=lambda p: (0 if _space(p)[0] is not None else 1,
+                                         -(_space(p)[0] or 0)))
+    th, body, notes = [], [], []
+    if has_strat:
+        th.append('<th>策略</th>')
+    for p in plans:
+        r = rows_by_code.get(p['code']) or {}
+        sp, px_txt = _space(p)
+        if sp is None:
+            sp_txt = '<span class="dim">—</span>'
+        else:
+            sp_txt = '<span class="n %s">%+.1f%%</span>' % ('is-up' if sp >= 0 else 'is-down', sp)
+        judge = r.get('judge') or p.get('judge') or '—'
+        cls = BUCKET.get(r.get('bucket'), ('tag--n', ''))[0]
+        exp_txt = ('%.2f %s' % (p['exp'], r.get('cur') or '元')) if p.get('exp') is not None else '—'
+        # 观察买点：表内没填就退回报告抽取值（台账 rows 的 obs 原文，如「≤ 83.18」），
+        # 两者同源（均出自报告），不构成编造；都缺才写「未给」。
+        if p.get('obs'):
+            obs_txt = '≤ %.2f' % p['obs']
+        elif (r.get('obs') or '').strip():
+            obs_txt = escape((r['obs'] or '').strip())
+        else:
+            obs_txt = '<span class="dim">未给</span>'
+        n_txt = ('%d 股' % p['plan_shares']) if p.get('plan_shares') else '<span class="dim">未定</span>'
+        added = (p.get('added') or '')[:10]
+        cells = ['<td class="pos-ov__nm"><b>%s</b><span class="cd">%s</span>%s</td>'
+                 % (escape(p['name']), escape(p['code']),
+                    ('<span class="plan-date">%s 加入</span>' % escape(added)) if added else ''),
+                 '<td><span class="tag %s">%s</span></td>' % (cls, escape(judge))]
+        if has_strat:
+            cells.append('<td>%s</td>' % escape(p.get('strategy') or '待定'))
+        cells += ['<td class="n">%s</td>' % exp_txt,
+                  '<td class="n">%s</td>' % escape(px_txt),
+                  '<td class="n">%s</td>' % sp_txt,
+                  '<td class="n">%s</td>' % obs_txt,
+                  '<td class="n">%s</td>' % n_txt,
+                  '<td class="pos-ov__go">%s</td>'
+                  % (('<a class="lk" href="%s" target="_blank" rel="noopener">报告 →</a>'
+                      % escape(p['url'])) if p.get('url') else '—')]
+        body.append('<tr>%s</tr>' % ''.join(cells))
+        if p.get('ladder') or p.get('note'):
+            notes.append('<div class="plan-note"><b>%s <span class="cd">%s</span></b>'
+                         '<p>%s</p></div>'
+                         % (escape(p['name']), escape(p['code']),
+                            escape(' / '.join(x for x in
+                                              (p.get('ladder', '').replace('\n', ' · '),
+                                               p.get('note', '')) if x))))
+    head = ''.join(th) if has_strat else ''
+    tail = ('<div class="plan-notes">%s</div>' % ''.join(notes)) if notes else ''
+    return (
+        '<div class="plan-sec">'
+        '<div class="plan-hd"><h3>计划持仓 <span class="plan-n">%d 只</span></h3>'
+        '<span class="plan-meta">未建仓 · 资料库《持仓与计划》表 · %s 同步</span></div>'
+        '<div class="pos-ovw"><table class="pos-ov"><thead><tr><th>标的</th><th>报告判定</th>%s'
+        '<th>期望价</th><th>现价</th><th>潜在空间</th><th>观察买点</th><th>计划股数</th><th></th>'
+        '</tr></thead><tbody>%s</tbody></table></div>%s'
+        '<p class="plan-ft">口径：只收「状态=计划中」且台账无实际持仓的标的；已持仓标的不在此重复，'
+        '见上方持仓卡。潜在空间 = 期望价 ÷ 现价 − 1，与观察池口径一致；「未定」= 表内未填计划股数，'
+        '非零仓建议。计划持仓是既定纪律的候选清单，不是即时买入建议。</p>'
+        '</div>'
+        % (len(plans), escape(pulled_at or '—'), head, ''.join(body), tail))
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--data', required=True)
@@ -823,12 +910,19 @@ def main():
     ap.add_argument('--px-asof', default='')
     # 持仓数据源：manifest 顶层 positions 段；缺省自动探测脚本同目录的 watchlist_manifest.json
     ap.add_argument('--manifest', default='')
+    # 计划持仓缓存：缺省取 manifest 同目录的 plan_table.json（sync_plan_table.py pull 产物）
+    ap.add_argument('--plan-table', default='')
     # 数据表 id：写进 #posSrc 与增强脚本，决定「＋」加到哪张表
     ap.add_argument('--database-id', default=DEFAULT_DB_ID)
     ap.add_argument('--snap-database-id', default=DEFAULT_SNAP_DB_ID)
     # 只在「本地预览、确定不上传」时才关；上传版必须带增强层
     ap.add_argument('--no-enhance', action='store_true',
                     help='跳过交互增强层注入（仅本地预览用，上传版绝不可用）')
+    # 施洛斯视图数据源：缺省取脚本同目录 schl_result.json，随渲染自动产出
+    ap.add_argument('--schl-json', default='',
+                    help='施洛斯结果 JSON，缺省 assets/watchlist/schl_result.json')
+    ap.add_argument('--no-schl', action='store_true',
+                    help='不注入施洛斯视图（仅预览用；上传版会让该 Tab 消失）')
     a = ap.parse_args()
 
     man = {}
@@ -837,6 +931,19 @@ def main():
         man = json.load(io.open(man_path, encoding='utf-8'))
     positions = man.get('positions') or []
     held = {p['code']: p for p in positions}
+
+    # 计划持仓：读 sync_plan_table.py pull 生成的缓存（真源 = 资料库《持仓与计划》表）
+    plan_path = a.plan_table or os.path.join(os.path.dirname(os.path.abspath(man_path)),
+                                             'plan_table.json')
+    plan_meta = {}
+    plan_rows = []
+    if os.path.isfile(plan_path):
+        plan_meta = json.load(io.open(plan_path, encoding='utf-8'))
+        plan_rows = [r for r in (plan_meta.get('records') or [])
+                     if r.get('status') == '计划中' and r.get('code') not in held]
+    else:
+        print('! 未找到 %s —— 计划持仓区将显示为空。先跑 sync_plan_table.py pull。'
+              % plan_path)
 
     rows = [enrich(r) for r in json.load(io.open(a.data, encoding='utf-8'))]
     for r in rows:
@@ -942,6 +1049,7 @@ def main():
         '@@CALENDAR@@': calendar(rows),
         '@@FRESH_FROM@@': escape(fresh_from),
         '@@POSITIONS@@': positions_html(positions, rows_by_code),
+        '@@PLANS@@': plans_html(plan_rows, rows_by_code, plan_meta.get('pulled_at', '')),
         # ── 页内「刷新现价」所需的三样东西：数据模型、条窗口常量、快照时点
         '@@PX_MODEL@@': model_json,
         '@@SPACE_MIN@@': '%.1f' % SPACE_MIN,
@@ -959,6 +1067,24 @@ def main():
     else:
         html, _ = inject_enhancement(html, load_enhancement(), a.database_id, a.snap_database_id)
 
+    # 施洛斯视图：数据源是版本管理内的 schl_result.json，随渲染一次产出。
+    # 早先它靠一次性 CSV 事后 patch，重建台账就会整块丢失（2026-11-09 事故），
+    # 现在由渲染器自己推得出来，缺数据源／锚点不符一律硬失败，不静默产出残页。
+    if a.no_schl:
+        print('schl: 已按 --no-schl 跳过 —— 上传版绝不可用')
+    else:
+        _sj = a.schl_json or os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                          'schl_result.json')
+        if os.path.isfile(_sj):
+            import patch_schl_tab as _schl
+            _before = html
+            html = _schl.apply_to_html(html, json_path=_sj)
+            print('schl: 已注入 A 级视图（%s，+%d bytes）'
+                  % (os.path.basename(_sj), len(html) - len(_before)))
+        else:
+            print('! schl: 未找到 %s —— 台账将不含施洛斯视图；'
+                  '若这是有意为之请显式传 --no-schl' % _sj)
+
     io.open(a.out, 'w', encoding='utf-8').write(html)
     print('written %s | %d bytes | %d rows' % (a.out, len(html), n))
     print('zones: A=%d H=%d N=%d S=%d | pos=%d pass=%d win30=%d fresh=%d'
@@ -970,7 +1096,7 @@ def main():
 
 
 TEMPLATE = r"""<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -984,7 +1110,9 @@ TEMPLATE = r"""<!DOCTYPE html>
   /* ── 配色三档 ───────────────────────────────────────────────────────
      2026-10-09 中途修订：首版为「柔和(#f8fafc) / 标准(#fff) / 深色」，用户反馈
      前者与后者观感差异过小（层次差仅 4% 明度），故合并为一档，空出的位置换成
-     暖色低蓝光的「护眼」。现为 标准（默认）/ 护眼 / 深色。
+     暖色低蓝光的「护眼」。现为 深色（默认，2026-11-09 用户裁定）/ 标准 / 护眼。
+     `:root` 里这套值仍是「标准」——它现在是 `[data-theme="std"]` 的取值来源，
+     `<html data-theme="dark">` 把页面默认盖到深色档，切换器照样三档可选。
      切换器在 masthead 右上角，选择存 localStorage（键 wl-theme）。
      三档共用同一套语义分层：红绿只服务涨跌，判定三桶走 slate / indigo / amber。
 
@@ -1046,7 +1174,11 @@ TEMPLATE = r"""<!DOCTYPE html>
         配 #fff 会成白底白字，必须单独给值。                              */
   --bg:#111419; --surface:#1a1f28; --surface-2:#161a22; --surface-3:#232a36;
   --line:#2c3442; --line-2:#212836;
-  --ink-900:#edf1f8; --ink-700:#c6d0e0; --ink-500:#8f9aad; --ink-400:#6f7a8c; --ink-300:#5b6576;
+  /* 2026-11-09 提升三级灰：深色档改为默认后逐元素量了一遍对比度，
+     原 ink-400 #6f7a8c 在卡面 #1a1f28 上只有 3.81:1（小字 AA 要 4.5），
+     ink-300 #5b6576 只有 2.81:1。现 ink-400→#8590a2（5.12）、
+     ink-300→#6b7484（3.51），层级仍单调递增：300 < 400 < 500 < 700 < 900。 */
+  --ink-900:#edf1f8; --ink-700:#c6d0e0; --ink-500:#8f9aad; --ink-400:#8590a2; --ink-300:#6b7484;
   --brand:#7d9bff; --brand-soft:#1d2540; --brand-fill:#4d6ee0;
   --solid:#39445a; --on-solid:#fff; --on-brand:#fff;
   --up:#ff6b6b; --up-soft:#3a1e22; --down:#3ecf92; --down-soft:#12332a;
@@ -1305,6 +1437,21 @@ td.jd .tag{display:inline-block}
 .pos__plan tbody tr:last-child td{border-bottom:none}
 .pos-empty{color:var(--ink-500);font-size:var(--fs-sm);padding:var(--s5)}
 
+/* ── 计划持仓（未建仓 · 资料库《持仓与计划》表） ─────────────────── */
+.plan-sec{margin-top:var(--s6);padding-top:var(--s5);border-top:1px solid var(--line)}
+.plan-hd{display:flex;align-items:baseline;gap:var(--s3);flex-wrap:wrap;margin-bottom:var(--s3)}
+.plan-hd h3{font-size:var(--fs-md);font-weight:700;color:var(--ink-900)}
+.plan-n{font-size:var(--fs-xs);font-weight:600;color:var(--brand);
+  background:var(--brand-soft);border-radius:var(--rp);padding:2px 9px;margin-left:6px}
+.plan-meta{font-size:var(--fs-xs);color:var(--ink-400)}
+.plan-date{display:block;font-size:var(--fs-xs);color:var(--ink-400);margin-top:2px}
+.plan-sec .pos-ov__go a{font-weight:600}
+.plan-notes{display:grid;gap:var(--s3);margin-top:var(--s4)}
+.plan-note{background:var(--surface-2);border-radius:var(--r1);padding:var(--s3) var(--s4)}
+.plan-note b{font-size:var(--fs-xs);color:var(--ink-900)}
+.plan-note p{font-size:var(--fs-xs);color:var(--ink-500);line-height:1.65;margin:4px 0 0}
+.plan-ft{font-size:var(--fs-xs);color:var(--ink-400);line-height:1.7;margin-top:var(--s4)}
+
 /* 判定标签（色相避开红绿） */
 .tag{display:inline-block;border-radius:var(--rp);padding:2px 9px;font-size:var(--fs-xs);
   font-weight:600;white-space:nowrap}
@@ -1431,11 +1578,14 @@ details.notes[open]>summary::before{content:"▾ "}
 .foot{margin-top:var(--s6);padding-top:var(--s4);border-top:1px solid var(--line);
   font-size:var(--fs-xs);color:var(--ink-400);line-height:1.95}
 </style>
-<script>/* 提前套用配色档位，避免深色档先闪一下浅色（FOUC）。
-   std 档无独立覆盖规则，setAttribute 后继承 :root 默认值即该档效果。
+<script>/* 提前套用配色档位，避免先闪一下别的档（FOUC）。
+   **默认档自 2026-11-09 起改为「深色」**（用户裁定）：无 localStorage 记录时落 dark，
+   <html> 标签上也写死了 data-theme="dark"，所以 JS 被禁也不回退成浅色。
+   std 档无独立覆盖规则，setAttribute('std') 后继承 :root 默认值即该档效果。
    键值兼容：首版的 soft / std 两档已合并为「标准」，旧值一律落到 std。 */
 (function(){try{var m={soft:'std',eye:'eye',std:'std',dark:'dark'};
-var t=m[localStorage.getItem('wl-theme')];if(t){document.documentElement.setAttribute('data-theme',t);}}catch(e){}})();</script>
+var t=m[localStorage.getItem('wl-theme')]||'dark';
+document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
 <script>/* 视图 Tab：持仓与计划（默认）/ 观察池。选择存 localStorage（键 wl-view2），点击切换在此。 */
 (function(){
   function show(v){
@@ -1477,7 +1627,7 @@ var t=m[localStorage.getItem('wl-theme')];if(t){document.documentElement.setAttr
     台账口径：期望价为报告内「折现 + 概率加权」结果；建仓门槛为 潜在空间 ≥ +15% 且买入胜率 ≥ 30%
   </p>
   <div class="tt" role="group" aria-label="配色档位">
-    <button type="button" class="tt__b" data-t="std" aria-pressed="true">标准</button><button type="button" class="tt__b" data-t="eye" aria-pressed="false">护眼</button><button type="button" class="tt__b" data-t="dark" aria-pressed="false">深色</button>
+    <button type="button" class="tt__b" data-t="std" aria-pressed="false">标准</button><button type="button" class="tt__b" data-t="eye" aria-pressed="false">护眼</button><button type="button" class="tt__b" data-t="dark" aria-pressed="true">深色</button>
   </div>
 </header>
 
@@ -1557,6 +1707,7 @@ var t=m[localStorage.getItem('wl-theme')];if(t){document.documentElement.setAttr
   </div>
   <div class="panel__body">
     @@POSITIONS@@
+    @@PLANS@@
   </div>
 </section>
 </div>
@@ -1725,7 +1876,7 @@ var t=m[localStorage.getItem('wl-theme')];if(t){document.documentElement.setAttr
         try{ localStorage.setItem(KEY, t); }catch(e){}
       });
     });
-    mark(document.documentElement.getAttribute('data-theme') || 'std');
+    mark(document.documentElement.getAttribute('data-theme') || 'dark');
   })();
 })();
 </script>

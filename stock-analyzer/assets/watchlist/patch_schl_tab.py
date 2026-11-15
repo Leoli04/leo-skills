@@ -1,12 +1,19 @@
 # -*- coding: utf-8 -*-
 """给台账加一个「沃尔特施洛斯策略观察」视图 Tab，内容是施洛斯改良标准筛出的 A 级。
 
-**为什么是独立步骤、不塞进 render_watchlist.py**：
-Tab 的内容（A 级名单、漏斗各层数量、口径日期）来自一次外部筛选的结果 CSV，
-不是渲染器从 manifest 推得出来的。渲染器负责「确定的骨架」，本脚本负责
-「外挂一块数据视图」，职责分开。标准流程是：
+**数据源**：`schl_result.json`（与本脚本同目录，纳入版本管理）。
+render_watchlist.py 渲染收尾时会自动调用本模块的 apply_to_html()，
+所以「重建台账把施洛斯视图吃掉」这一类事故从根上不会再有。
 
-    render_watchlist.py  →  patch_schl_tab.py（可选）  →  check_ledger_skeleton.py
+历史教训（2026-11-09）：早先数据源是一次性 CSV，不入库、渲染器不知道它的存在，
+于是「render → 直接覆盖上传」就整块丢了视图，且脚本的 WARN 被当成可选模块忽略。
+现在的规则是：数据进 JSON、渲染器自己推得出来，缺了就是硬失败而不是静默丢。
+
+标准流程：
+
+    render_watchlist.py（自动带施洛斯）  →  safe_upload.py  →  check_ledger_skeleton.py
+
+手工补 CSV 的兼容入口仍在（--csv），只用于「临时换一批标的、还没想好要不要固化」。
 
 **设计约束**（来自 WATCHLIST.md §13/§14，别改）：
 - 页面 JS 会扫 `table.wl tbody` / `[data-row]` / `.zone` / `.zcard` 做重排与统计，
@@ -17,6 +24,10 @@ Tab 的内容（A 级名单、漏斗各层数量、口径日期）来自一次�
 - 正文不出现裸 `<`（避免二次转义），阈值一律用 ≤ / ≥ 表述。
 
 用法：
+    # 默认：读同目录的 schl_result.json
+    python assets/watchlist/patch_schl_tab.py --html "投资观察池台账-20261107.html"
+
+    # 仍支持一次性 CSV（临时批次）
     python assets/watchlist/patch_schl_tab.py \
         --html "投资观察池台账-20261107.html" \
         --csv _schl_result.csv \
@@ -25,9 +36,6 @@ Tab 的内容（A 级名单、漏斗各层数量、口径日期）来自一次�
 
     # 只看会改成什么，不落盘
     python assets/watchlist/patch_schl_tab.py --html x.html --csv y.csv --dry-run
-
-    # 备注（每只一句问题）默认按代码内置；换一批标的时用 --notes 传 JSON
-    python assets/watchlist/patch_schl_tab.py --html x.html --csv y.csv --notes notes.json
 
 幂等：已经含 `id="view-schl"` 的文件会直接跳过（退出码 0）。
 退出码：0 = 已应用或已存在；2 = 文件读不到；3 = 锚点命中数不符
@@ -41,6 +49,9 @@ import json
 import os
 import re
 import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_JSON = os.path.join(HERE, "schl_result.json")
 
 TAB_LABEL = "沃尔特施洛斯策略观察"
 
@@ -178,6 +189,34 @@ def read_a_rows(path):
     return sorted([x for x in data if x["层级"] == "A"], key=lambda x: float(x["PB"]))
 
 
+def read_json(path):
+    """读 schl_result.json → (a_rows, funnel, asof, notes)。行的键名对齐 CSV 口径，
+    这样 build_view 两条数据源共用一套格式化逻辑。"""
+    d = json.load(io.open(path, encoding="utf-8"))
+    raw = d.get("rows") or []
+    if not raw:
+        raise SystemExit("%s 里没有 rows，无可展示内容" % path)
+    rows, notes = [], {}
+    for x in raw:
+        code = str(x["code"]).strip()
+        rows.append({
+            "代码": code,
+            "名称": x["name"],
+            "行业": x.get("industry", ""),
+            "PB": x["pb"],
+            "PE_TTM": x["pe"],
+            "ROE近三年": x["roe"],
+            "距52周低点%": x["low52"],
+            "近12月股息率%": x["dy"],
+            "资产负债率%": x["debt"],
+        })
+        if x.get("note"):
+            notes[code] = x["note"]
+    rows.sort(key=lambda x: float(x["PB"]))
+    funnel = [(str(a), str(b)) for a, b in (d.get("funnel") or [])]
+    return rows, funnel, d.get("asof", ""), notes
+
+
 def build_view(a_rows, funnel, date, notes):
     trs = []
     for i, x in enumerate(a_rows, 1):
@@ -290,10 +329,44 @@ def verify(html, view):
             raise SystemExit("VERIFY_FAIL 新视图污染了观察池钩子：%s" % bad)
 
 
+def apply_to_html(html, json_path=None, csv_path=None, funnel=None, date=None,
+                  notes=None):
+    """给一段 HTML 补上施洛斯视图，返回新 HTML。**渲染器（render_watchlist.py）就是调这个**。
+
+    已含视图则原样返回（幂等）。锚点对不上直接 SystemExit —— 宁可渲染失败，
+    也不要静默产出一份少了模块的台账。
+    """
+    if 'id="view-schl"' in html:
+        return html
+    src = json_path or (None if csv_path else DEFAULT_JSON)
+    if csv_path:
+        a_rows = read_a_rows(csv_path)
+        fn, dt, nt = [], date or "", {}
+    else:
+        if not src or not os.path.isfile(src):
+            raise SystemExit("找不到施洛斯数据源：%s（要么补这个文件，要么传 --csv）" % src)
+        a_rows, fn, dt, nt = read_json(src)
+        if date:
+            dt = date
+    if not a_rows:
+        raise SystemExit("施洛斯数据源里没有可展示的行")
+    if funnel:
+        fn = funnel
+    merged = dict(DEFAULT_NOTES)
+    merged.update(nt)
+    if notes:
+        merged.update(notes)
+    view = build_view(a_rows, fn, dt or "—", merged)
+    out = apply(html, view)
+    verify(out, view)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--html", required=True, help="要加 Tab 的台账 HTML")
-    ap.add_argument("--csv", required=True, help="施洛斯筛选结果 CSV（需含 层级 列）")
+    ap.add_argument("--json", default="", help="施洛斯结果 JSON，缺省取同目录 schl_result.json")
+    ap.add_argument("--csv", default="", help="一次性 CSV（兼容旧流程，优先于 --json）")
     ap.add_argument("--out", default="", help="输出路径，默认原地覆盖 --html")
     ap.add_argument("--funnel", default="",
                     help='漏斗前几层，形如 "5927:全 A,167:估值初筛"；A 级数量自动取')
@@ -305,35 +378,48 @@ def main():
     if not os.path.exists(a.html):
         print("ERR 文件不存在：%s" % a.html)
         return 2
+    if a.csv and not os.path.exists(a.csv):
+        print("ERR CSV 不存在：%s" % a.csv)
+        return 2
     html = io.open(a.html, encoding="utf-8").read()
 
     if 'id="view-schl"' in html:
         print("SKIP 已含施洛斯视图（%d 处），不重复插入" % html.count('id="view-schl"'))
         return 0
 
-    a_rows = read_a_rows(a.csv)
+    src = a.csv or a.json or DEFAULT_JSON
+    if not a.csv:
+        a_rows, fn, dt, nt = read_json(src)
+        if not a.metrics_date:
+            a.metrics_date = dt
+    else:
+        a_rows = read_a_rows(a.csv)
+        fn, nt = [], {}
     if not a_rows:
-        raise SystemExit("CSV 里没有 层级=A 的行，无可展示内容")
+        raise SystemExit("数据源里没有可展示的行，无可展示内容")
 
     notes = dict(DEFAULT_NOTES)
+    notes.update(nt)
     if a.notes:
         notes.update(json.load(io.open(a.notes, encoding="utf-8")))
 
-    funnel = []
+    funnel = list(fn)
     if a.funnel:
+        funnel = []
         for part in a.funnel.split(","):
             part = part.strip()
             if not part:
                 continue
             num, _, label = part.partition(":")
             funnel.append((num.strip(), label.strip() or num.strip()))
-    else:
-        print("! 未传 --funnel，漏斗只显示 A 级一层；重跑筛选后建议补上各层数量")
+    elif not funnel:
+        print("! 漏斗为空，只显示 A 级一层；重跑筛选后建议补上各层数量")
 
     view = build_view(a_rows, funnel, a.metrics_date or "—", notes)
     out_html = apply(html, view)
     verify(out_html, view)
 
+    print("数据源 %s ｜ 口径日 %s" % (os.path.basename(src), a.metrics_date or "—"))
     print("A 级 %d 只：%s" % (len(a_rows), "、".join(x["名称"] for x in a_rows)))
     print("bytes %d -> %d (+%d)" % (len(html), len(out_html), len(out_html) - len(html)))
     n_btn = len(re.findall(r'<button[^>]*\bdata-v="', out_html))
