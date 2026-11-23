@@ -244,7 +244,8 @@ python scripts/transcribe_cloud_asr.py normalize --provider tongyi --input-json 
   - `SKILL.md` — 工序表、铁律 10 条、各工序要点、路径变量与依赖探活
   - `references/voice-narrative.md` — 叙事观点族八条写作约束
 - **⚠️ 外部依赖**：`SPEC.md` 契约、`tools/pipeline.js`（工序编排 + 哈希幂等）、`tools/cdp.js`、`tools/inline_images.py`、`tools/rename_images.js` 以及 `posts/<slug>/` 输出目录**均不在本仓库**，位于独立的项目工程内。本仓库这一份是技能说明的版本快照，单独克隆无法直接跑流水线
-- **路径一律走环境变量**（技能文件里不含任何本机绝对路径）：`WECHAT_STUDIO_DIR` = 流水线工程根，**必填**，未设置就停下问用户；`PYTHON` = 带 Pillow 的解释器，缺省退 `python3` → `python`；`SKILLS_DIR` = 已装技能根目录，缺省 `~/.workbuddy/skills`（禁词表取自其中 `unclecheng-reduce-ai-perception-v2`，未装则跳过该表）
+- **路径一律走环境变量**（技能文件里不含任何本机绝对路径）：`WECHAT_STUDIO_DIR` = 流水线工程根，**必填**，未设置就停下问用户；`PYTHON` = 带 Pillow 的解释器，缺省退 `~/.workbuddy/pyenv/shared/Scripts/python.exe`（公用 venv）→ `python3` → `python`；`SKILLS_DIR` = 已装技能根目录，缺省 `~/.workbuddy/skills`（禁词表取自其中 `unclecheng-reduce-ai-perception-v2`，未装则跳过该表）
+- **Python 依赖装在公用 venv 里**：`~/.workbuddy/pyenv/shared`，由 WorkBuddy 自带运行时建的独立环境（基解释器只读不改、系统解释器零污染）。重建 = 删目录后用 venv + `pip install --index-url https://pypi.org/simple Pillow` 重来，命令见 `SKILL.md`「公用 Python 环境」
 - **发布方式**：人工 —— 复制 → 粘贴 → 群发。不接公众号 API，凭证不入库
 
 ```bash

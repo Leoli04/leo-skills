@@ -13,7 +13,7 @@ agent_created: true
 | 变量 | 指向 | 缺省 / 缺失时 |
 |---|---|---|
 | `WECHAT_STUDIO_DIR` | 流水线工程根（含 `SPEC.md`、`tools/`、`posts/`） | **无缺省，必须先设置**；未设置就停下来问用户 |
-| `PYTHON` | 带 Pillow 的解释器（`inline_images.py` 用） | 依次退到 `python3` → `python`，探活失败则停下报错 |
+| `PYTHON` | 带 Pillow 的解释器（`inline_images.py` 用） | 依次退到 `~/.workbuddy/pyenv/shared/Scripts/python.exe`（公用 venv，见下）→ `python3` → `python`；全探不到就停下报错 |
 | `SKILLS_DIR` | CodeBuddy 已装技能根目录（取别的技能的参考资料时才用） | `~/.workbuddy/skills`（Windows 为 `%USERPROFILE%\.workbuddy\skills`） |
 
 ```bash
@@ -156,4 +156,21 @@ node tools/pipeline.js stamp  <slug> <id>     # 跑完后立刻记哈希
   echo "缺 Pillow 或解释器不对：用 PYTHON=<带 Pillow 的 python> 覆盖"
 ```
 
-- 需要长期固定解释器时，写进用户级环境变量（PowerShell：`setx PYTHON "C:\path\to\python.exe"`），**不要写回本文件**。
+- 需要长期固定解释器时，写进用户级环境变量（PowerShell：`setx PYTHON "<venv 里的 python.exe>"`），**不要写回本文件**。
+
+### 公用 Python 环境（跨技能复用，不动系统解释器）
+
+约定位置：`~/.workbuddy/pyenv/shared`（Windows 即 `%USERPROFILE%\.workbuddy\pyenv\shared`）。**只往这个 venv 装包，绝不用 `pip install` 装进系统 / 开发用解释器。**
+
+```bash
+# 用 WorkBuddy 自带运行时建 venv（基解释器只被读取，不被写入）
+"<WorkBuddy>/binaries/python/versions/<ver>/python.exe" -m venv ~/.workbuddy/pyenv/shared
+
+# 装依赖只落在 venv 内
+~/.workbuddy/pyenv/shared/Scripts/python.exe -m pip install --index-url https://pypi.org/simple Pillow
+```
+
+- **重建**：删掉整个 `~/.workbuddy/pyenv/shared` 重跑上面两条即可，无状态、可复制。
+- **验证隔离**：`<基解释器> -c "import PIL"` 必须报 `ModuleNotFoundError`；报得出来说明装错地方了。
+- ⚠️ **pip 镜像坑**：本机全局 `pip config` 把 `index-url` 指向清华镜像，走代理时它不通，pip 只吐一句 `Could not find a version that satisfies the requirement ... (from versions: none)`，看着像包不存在，其实是网络。加 `--index-url https://pypi.org/simple` 就地覆盖，**不要去改全局 pip 配置**。
+- 已验证组合：基解释器 3.13.x + `Pillow 13.0.0`（3.11 + Pillow 10.2.0 也跑得通，历史产物由它出）。
