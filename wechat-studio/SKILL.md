@@ -8,17 +8,30 @@ agent_created: true
 
 ## 项目位置
 
-```
-F:\workspace\WorkBuddy\freelancer\wechat-studio\
-├── SPEC.md                契约（单一事实来源，动手前必读）
-├── tools\pipeline.js      工序编排 + 哈希幂等
-├── tools\cdp.js           零依赖 CDP 浏览器驱动
-├── tools\inline_images.py 图片 → base64 内联
-├── tools\rename_images.js 出图后按契约重命名
-└── posts\<slug>\          一篇文章一个目录
+流水线本体（契约 `SPEC.md` + 编排脚本 `tools/` + 产物 `posts/`）在**独立工程目录**，不在技能目录内。路径一律由环境变量给出，本文件不写死任何本机绝对路径。
+
+| 变量 | 指向 | 缺省 / 缺失时 |
+|---|---|---|
+| `WECHAT_STUDIO_DIR` | 流水线工程根（含 `SPEC.md`、`tools/`、`posts/`） | **无缺省，必须先设置**；未设置就停下来问用户 |
+| `PYTHON` | 带 Pillow 的解释器（`inline_images.py` 用） | 依次退到 `python3` → `python`，探活失败则停下报错 |
+| `SKILLS_DIR` | CodeBuddy 已装技能根目录（取别的技能的参考资料时才用） | `~/.workbuddy/skills`（Windows 为 `%USERPROFILE%\.workbuddy\skills`） |
+
+```bash
+# 会话开始先确认，三个都空就不要再往下走
+echo "studio=${WECHAT_STUDIO_DIR:-<未设>} python=${PYTHON:-<默认>} skills=${SKILLS_DIR:-<默认>}"
 ```
 
-**第一件事：读 `SPEC.md`。** 它是契约，本 skill 只是入口说明。契约与本文件冲突时以 SPEC 为准。
+```
+$WECHAT_STUDIO_DIR/
+├── SPEC.md                契约（单一事实来源，动手前必读）
+├── tools/pipeline.js      工序编排 + 哈希幂等
+├── tools/cdp.js           零依赖 CDP 浏览器驱动
+├── tools/inline_images.py 图片 → base64 内联
+├── tools/rename_images.js 出图后按契约重命名
+└── posts/<slug>/          一篇文章一个目录
+```
+
+**第一件事：读 `$WECHAT_STUDIO_DIR/SPEC.md`。** 它是契约，本 skill 只是入口说明。契约与本文件冲突时以 SPEC 为准。
 
 本 skill 自带写法细则，**按文体路由**（写作前先判，判错整篇都白做）：
 
@@ -50,6 +63,7 @@ F:\workspace\WorkBuddy\freelancer\wechat-studio\
 然后：
 
 ```bash
+cd "$WECHAT_STUDIO_DIR"
 node tools/pipeline.js init <slug> --format rich
 ```
 
@@ -73,13 +87,12 @@ node tools/pipeline.js init <slug> --format rich
 ## 工序与命令
 
 ```bash
-TOOLS=F:/workspace/WorkBuddy/freelancer/wechat-studio/tools
-cd /f/workspace/WorkBuddy/freelancer/wechat-studio
+cd "$WECHAT_STUDIO_DIR"
 
-node $TOOLS/pipeline.js init   <slug> --format rich|image
-node $TOOLS/pipeline.js status <slug>          # 查全部工序状态
-node $TOOLS/pipeline.js check  <slug> <id>     # exit 0=可跳过 1=需重跑
-node $TOOLS/pipeline.js stamp  <slug> <id>     # 跑完后立刻记哈希
+node tools/pipeline.js init   <slug> --format rich|image
+node tools/pipeline.js status <slug>          # 查全部工序状态
+node tools/pipeline.js check  <slug> <id>     # exit 0=可跳过 1=需重跑
+node tools/pipeline.js stamp  <slug> <id>     # 跑完后立刻记哈希
 ```
 
 | 槽位 | `format: rich`（图文） | `format: image`（贴图） |
@@ -107,7 +120,7 @@ node $TOOLS/pipeline.js stamp  <slug> <id>     # 跑完后立刻记哈希
 
 **02 去AI味（写作后、审核前，AI 自审第二道）**
 - 加载 `humanizer` 技能，按其四层自检（L1 硬性规则 / L2 风格 / L3 内容 / L4 活人感）定向改写 `article.md` / `cards/src/*.md`
-- 禁词表：`C:\Users\MrLi\.workbuddy\skills\unclecheng-reduce-ai-perception-v2\references\banned-words.md`
+- 禁词表：`$SKILLS_DIR/unclecheng-reduce-ai-perception-v2/references/banned-words.md`（该技能未装则跳过此表，只按 humanizer 自带规则；别把路径当硬依赖）
 - 只动措辞标点，不增删事实、不改章节结构、不动图片位点（位点一变会误触发下游重跑）
 - 改完 `stamp <slug> 02-deai`，随后停硬门等用户审
 - 人工改动后本工序会判 `stale`，**预期内，不重跑**——直接 `stamp` 认领，人工措辞是最终文本
@@ -130,8 +143,17 @@ node $TOOLS/pipeline.js stamp  <slug> <id>     # 跑完后立刻记哈希
 
 交付时必须一并说明：**积分消耗**（AI 出图每张约 5–10 积分；若因 `stale` 判定而跳过重跑，要说明「省下了几张图」）、**是否还有未替换的占位符**（署名已定型，通常为零，新增字段要检查）、以及下一步的人工操作。
 
-## 环境注意（本机特有）
+## 环境注意
 
-- bash shim 的 PATH 损坏（`ls`/`head`/`dirname` 等 command not found），PowerShell stdout 也不被捕获 → 取输出用「重定向到文件再 Read」或 `node -e`。
-- Python 用 **`D:/develop/python/Python311/python.exe`**（有 PIL 10.2.0）；managed 3.13.12 没装 PIL。
+以下是与具体机器无关的老坑，另有两条与解释器 / 依赖有关，按变量走：
+
+- bash shim 的 PATH 可能损坏（`ls`/`head`/`dirname` 等 command not found），PowerShell stdout 也可能不被捕获 → 取输出用「重定向到文件再 Read」或 `node -e`。
 - Chrome 会回收由 CDP 新建的标签页 → `cdp.js` 已改为复用常驻页；后台窗口截图需先 `bringToFront`。
+- `inline_images.py` 依赖 **Pillow**。`$PYTHON` 必须指向装了这个库的解释器，**跑前先探活**，别等脚本半路失败：
+
+```bash
+"${PYTHON:-python3}" -c "import PIL, sys; print(PIL.__version__, sys.executable)" || \
+  echo "缺 Pillow 或解释器不对：用 PYTHON=<带 Pillow 的 python> 覆盖"
+```
+
+- 需要长期固定解释器时，写进用户级环境变量（PowerShell：`setx PYTHON "C:\path\to\python.exe"`），**不要写回本文件**。

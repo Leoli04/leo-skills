@@ -241,13 +241,14 @@ python scripts/transcribe_cloud_asr.py normalize --provider tongyi --input-json 
 - **卡片 / 摘要 / 金句一律 HTML → PNG 渲染**，不用图像模型（中文长文本必然糊；渲染确定性、秒级、零积分）。AI 出图只用于不含中文长文本的视觉装饰，且图中中文标签控制在 2–5 个词
 - **去 AI 味和加人味方向相反**：`02-deai` 只做减法，叙事观点族要的人味必须由 `01 写作` 供给
 - **核心文件**：
-  - `SKILL.md` — 工序表、铁律 10 条、各工序要点、本机环境注意
+  - `SKILL.md` — 工序表、铁律 10 条、各工序要点、路径变量与依赖探活
   - `references/voice-narrative.md` — 叙事观点族八条写作约束
 - **⚠️ 外部依赖**：`SPEC.md` 契约、`tools/pipeline.js`（工序编排 + 哈希幂等）、`tools/cdp.js`、`tools/inline_images.py`、`tools/rename_images.js` 以及 `posts/<slug>/` 输出目录**均不在本仓库**，位于独立的项目工程内。本仓库这一份是技能说明的版本快照，单独克隆无法直接跑流水线
+- **路径一律走环境变量**（技能文件里不含任何本机绝对路径）：`WECHAT_STUDIO_DIR` = 流水线工程根，**必填**，未设置就停下问用户；`PYTHON` = 带 Pillow 的解释器，缺省退 `python3` → `python`；`SKILLS_DIR` = 已装技能根目录，缺省 `~/.workbuddy/skills`（禁词表取自其中 `unclecheng-reduce-ai-perception-v2`，未装则跳过该表）
 - **发布方式**：人工 —— 复制 → 粘贴 → 群发。不接公众号 API，凭证不入库
 
 ```bash
-# 管线入口（在项目工程目录内执行）
+# 管线入口（先 cd "$WECHAT_STUDIO_DIR"）
 node tools/pipeline.js init   <slug> --format rich|image
 node tools/pipeline.js status <slug>          # 查全部工序状态
 node tools/pipeline.js check  <slug> <id>     # exit 0=可跳过 1=需重跑
