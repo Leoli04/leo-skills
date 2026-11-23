@@ -230,6 +230,30 @@ python scripts/download_xiaoyuzhou_episode.py <episode-url> \
 python scripts/transcribe_cloud_asr.py normalize --provider tongyi --input-json raw.json
 ```
 
+### ✍️ wechat-studio
+
+公众号文章流水线：**写作 → 去 AI 味 → 人工审核 → 配图/卡片 → 排版 → 人工发布**。契约与执行脚本在独立的项目工程内，本仓库只收技能说明与写作细则。
+
+- **形式在写作之前定死**：`rich`（图文长文）/ `image`（贴图卡片）。形式会改变写法——先写通用稿再改形式，等于让那次人工审核白做
+- **文体路由判错，整篇白做**：技术文档族走 `SPEC.md` 6.1；叙事观点族走 `references/voice-narrative.md` + `SPEC.md` 6.2（不写章节标题、不写引言卡、纯段落流 30–35 段）
+- **两个人工审核门，不许抢跑**：去 AI 味（humanizer）之后必须停。图文支线是**硬门**（下游 AI 出图烧积分），贴图支线是**柔门**（下游渲染免费）
+- **幂等 = 哈希幂等**，不是「文件存在即跳过」：每道工序跑完立刻 `stamp`，源文件改动后下游自动标 `stale`。但 `stale ≠ 必须重跑`——只改 frontmatter / 署名 / 错别字时位点未变，直接 `stamp` 认领，别为一次误重跑烧 15–30 积分
+- **卡片 / 摘要 / 金句一律 HTML → PNG 渲染**，不用图像模型（中文长文本必然糊；渲染确定性、秒级、零积分）。AI 出图只用于不含中文长文本的视觉装饰，且图中中文标签控制在 2–5 个词
+- **去 AI 味和加人味方向相反**：`02-deai` 只做减法，叙事观点族要的人味必须由 `01 写作` 供给
+- **核心文件**：
+  - `SKILL.md` — 工序表、铁律 10 条、各工序要点、本机环境注意
+  - `references/voice-narrative.md` — 叙事观点族八条写作约束
+- **⚠️ 外部依赖**：`SPEC.md` 契约、`tools/pipeline.js`（工序编排 + 哈希幂等）、`tools/cdp.js`、`tools/inline_images.py`、`tools/rename_images.js` 以及 `posts/<slug>/` 输出目录**均不在本仓库**，位于独立的项目工程内。本仓库这一份是技能说明的版本快照，单独克隆无法直接跑流水线
+- **发布方式**：人工 —— 复制 → 粘贴 → 群发。不接公众号 API，凭证不入库
+
+```bash
+# 管线入口（在项目工程目录内执行）
+node tools/pipeline.js init   <slug> --format rich|image
+node tools/pipeline.js status <slug>          # 查全部工序状态
+node tools/pipeline.js check  <slug> <id>     # exit 0=可跳过 1=需重跑
+node tools/pipeline.js stamp  <slug> <id>     # 跑完后立刻记哈希
+```
+
 ## 使用方式
 
 将本仓库克隆后，把对应 skill 目录放入 CodeBuddy 的 skills 目录（`.codebuddy/skills/`），即可通过自然语言触发。
@@ -294,6 +318,9 @@ leo-skills/
 │   ├── SKILL.md
 │   ├── references/        # 笔记模板 / 三轮审校 / 专名纠错 / 转写方案
 │   └── scripts/           # 小宇宙抓取 / 本地与云转写
+├── wechat-studio/         # 公众号文章流水线（写作 → 审核 → 配图 → 排版 → 人工发布）
+│   ├── SKILL.md
+│   └── references/        # 叙事观点族写作细则
 ├── youtube-downloader/    # YouTube 下载技能
 │   ├── SKILL.md
 │   ├── README_zh.md
